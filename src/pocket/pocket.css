@@ -1,0 +1,18 @@
+.pk { display: flex; flex-direction: column; gap: 14px; }
+.pk h3 { margin: 0; font-size: 1rem; }
+.pk .pk-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.pk .pk-bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s linear; }
+.pk .pk-note { font-size: .85rem; color: var(--fg-2); line-height: 1.4; }
+.pk .pk-err { color: var(--danger); font-size: .85rem; }
+.pk .pk-voices { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.pk .pk-voice { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.pk .pk-voice:last-child { border-bottom: 0; }
+.pk .pk-voice.sel { background: var(--accent-soft); }
+.pk .pk-voice .pk-name { flex: 1; }
+.pk .pk-voice .pk-play { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--fg); }
+.pk .pk-voice .pk-play svg { width: 18px; height: 18px; }
+.pk .pk-voice .pk-play:disabled { opacity: .5; }
+.pk .pk-item, .pk .pk-job { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.pk .pk-item > .pk-grow, .pk .pk-job > .pk-grow { flex: 1; min-width: 0; }
+.pk .pk-item .t, .pk .pk-job .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk .pk-item .s, .pk .pk-job .s { font-size: .8rem; color: var(--fg-2); }

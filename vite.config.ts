@@ -24,15 +24,25 @@ export default defineConfig({
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
         // App shell only. The pdf.js worker is big but needed offline; the
         // neural voice model is cached separately by transformers.js (Cache API).
-        globPatterns: ['**/*.{js,css,html,svg,png,mjs,wasm}'],
-        maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
+        // The Pocket-mode worker + onnxruntime wasm (~24 MB) are NOT precached:
+        // they're fetched only when Pocket mode is first used, then runtime-cached.
+        globPatterns: ['**/*.{js,css,html,svg,png,mjs}'],
+        globIgnores: ['**/ort-wasm*', '**/worker-*.js'],
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
         navigateFallback: 'index.html',
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => /\/assets\/(ort-wasm|worker-)/.test(url.pathname),
+            handler: 'CacheFirst',
+            options: { cacheName: 'pocket-runtime', expiration: { maxEntries: 10 } },
+          },
+        ],
       },
     }),
   ],

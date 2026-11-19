@@ -12,6 +12,9 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "linkedom": "^0.18.15",
+    "pdf-lib": "^1.17.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
     "vite-plugin-pwa": "^2.0.0"
