@@ -1,7 +1,8 @@
 // Pocket mode: neural TTS (kokoro-js, in a worker) rendered ahead of time to audio blobs in IndexedDB.
 import { audioKey, type PlaybackEngine, type PocketJob, type PocketStatus, type PocketVoice } from '../types';
-import { getAudio, getContent, listAudioKeys, putAudio } from '../db';
+import { getAudio, getContent, getSettings, listAudioKeys, putAudio } from '../db';
 import { encodeWav } from './wav';
+import { prepareForSpeech } from '../speech';
 import { createEngine } from './engine';
 import type { WorkerIn, WorkerOut } from './worker';
 
@@ -183,8 +184,14 @@ async function renderOne(cur: Internal) {
     const key = audioKey(job.itemId, job.section, job.voice);
     if (await getAudio(key)) { job.state = 'done'; job.progress = 1; return; }
     const content = await getContent(job.itemId);
-    const sentences = content?.sections[job.section]?.sentences;
-    if (!sentences?.length) throw new Error('Section has no text');
+    const raw = content?.sections[job.section]?.sentences;
+    if (!raw?.length) throw new Error('Section has no text');
+    // Speech cleanup + pronunciations are baked into the audio here. Changing those settings later
+    // does NOT re-render audio that already exists (the settings panel shows a hint about this).
+    // Sentences that clean to '' stay in the array so offsets remain 1:1 with sentences; the worker
+    // turns an empty/failed sentence into short silence and still records its offset.
+    const cfg = await getSettings();
+    const sentences = raw.map((x) => prepareForSpeech(x, cfg));
     job.state = 'rendering'; job.progress = 0; emitJobs();
     const r = await exclusive(async () => {
       if (cur.cancelled) throw new Error('cancelled');

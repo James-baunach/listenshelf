@@ -2,8 +2,10 @@
 import { getItem, getQueue, putContent, putItem, setQueue, updateItem, getSettings } from '../db';
 import type { Item } from '../types';
 import { htmlToSections } from './parse';
+import { findSpoken, packSpoken, resolveSpokenFiles } from './spoken';
 
 export { htmlToSections } from './parse';
+export { findSpoken, packSpoken, unpackSpoken } from './spoken';
 
 export interface WikiHit { title: string; description?: string; thumbnailUrl?: string; key: string }
 /** 'keep' = leave in place if already queued, else append (used for retries). */
@@ -140,11 +142,20 @@ export async function addArticle(titleOrUrl: string, opts: AddOptions = {}): Pro
       { signal: opts.signal, headers: { Accept: 'text/html' } });
     const html = await r.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const sections = htmlToSections(doc, settings.wikiSkipSections);
+    // Spoken Wikipedia box must be read before htmlToSections strips it.
+    let spokenAudioUrl: string | undefined;
+    try {
+      const sp = findSpoken(doc);
+      if (sp) {
+        const urls = sp.urls.length ? sp.urls : await resolveSpokenFiles(lang, sp.files, opts.signal).catch(() => []);
+        spokenAudioUrl = packSpoken(urls, sp.date);
+      }
+    } catch { /* optional feature */ }
+    const sections = htmlToSections(doc, settings.wikiSkipSections, sum.canonical);
     const totalChars = sections.reduce((n, s) => n + s.charCount, 0);
     if (!totalChars) throw new WikiError('This article has no readable text.');
     await putContent({ id, sections });
-    await updateItem(id, { status: 'ready', error: undefined, totalChars, sectionCount: sections.length });
+    await updateItem(id, { status: 'ready', error: undefined, totalChars, sectionCount: sections.length, spokenAudioUrl });
     return id;
   } catch (e) {
     await updateItem(id, { status: 'error', error: (e as Error).message || 'Download failed' });

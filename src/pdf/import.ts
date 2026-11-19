@@ -49,7 +49,7 @@ export async function importPdfs(files: File[]): Promise<string[]> {
 
 /** Restarts processing for books left in 'processing' by a closed tab. Call on library mount. */
 export async function resumeStalled() {
-  for (const it of await listItems('book')) if (it.status === 'processing' && !active.has(it.id)) enqueue(it.id);
+  for (const it of await listItems('book')) if (it.status === 'processing' && it.format !== 'epub' && !active.has(it.id)) enqueue(it.id);
 }
 
 async function processBook(id: string) {

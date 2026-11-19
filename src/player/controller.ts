@@ -398,3 +398,16 @@ onChange('items', async () => {
     else emit();
   }
 });
+
+// Content replaced for the loaded item (OCR finished, page map rebuilt, re-import):
+// swap it in place and keep the position (clamped). Restart playback only if it was playing.
+onChange('content', async () => {
+  const id = state.itemId;
+  if (!id || !state.content) return;
+  const fresh = await getContent(id);
+  if (!fresh || id !== state.itemId || fresh === state.content) return;
+  state.content = fresh;
+  const [s, i] = clampPos(state.section, state.sentence);
+  state.section = s; state.sentence = i;
+  if (state.playing) startPlayback(); else emit();
+});

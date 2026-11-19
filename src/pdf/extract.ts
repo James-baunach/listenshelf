@@ -1,6 +1,6 @@
 // DOM-free PDF text extraction: pdf.js document in -> clean Sections out.
 // Everything here is testable in Node (see scripts/test-pdf.mjs).
-import { makeSection, normalize } from '../text';
+import { normalize, splitSentences } from '../text';
 import type { Section } from '../types';
 
 // ─── minimal structural types of the pdf.js API we use ───
@@ -184,30 +184,69 @@ const KEEP_HYPHEN = new Set([
   'day', 'year', 'world', 'time', 'life', 'part', 'so', 'by', 'up', 'in', 'on', 'out',
 ]);
 
-/** Joins the lines of one paragraph, repairing hyphenated line breaks. */
-export function joinLines(texts: string[]): string {
+/** Joins the lines of one paragraph, repairing hyphenated line breaks. Also returns where each input line starts in the output. */
+export function joinLinesMap(texts: string[]): { text: string; starts: number[] } {
   let out = '';
+  const starts: number[] = [];
   for (const t of texts) {
-    if (!out) { out = t; continue; }
+    if (!out) { out = t; starts.push(0); continue; }
     const m = out.match(/([A-Za-zÀ-ɏ]+)-$/);
     if (m && /^[a-zß-ɏ]/.test(t)) {
-      out = KEEP_HYPHEN.has(m[1].toLowerCase()) ? out + t : out.slice(0, -1) + t;
+      if (KEEP_HYPHEN.has(m[1].toLowerCase())) { starts.push(out.length); out += t; }
+      else { out = out.slice(0, -1); starts.push(out.length); out += t; }
     } else if (m && /^[A-Z0-9]/.test(t)) {
-      out += t; // real hyphen before a capital / number: "Anglo-Saxon"
+      starts.push(out.length); out += t; // real hyphen before a capital / number: "Anglo-Saxon"
     } else if (/[—–]$/.test(out)) {
-      out += t;
-    } else out += ' ' + t;
+      starts.push(out.length); out += t;
+    } else { out += ' '; starts.push(out.length); out += t; }
   }
-  return out;
+  return { text: out, starts };
+}
+export function joinLines(texts: string[]): string { return joinLinesMap(texts).text; }
+
+/** A paragraph with the (1-based) page of each of its lines, for per-sentence page numbers. */
+export interface Para { text: string; lineStarts: number[]; linePages: number[] }
+
+export function linesToParas(lines: Line[]): Para[] {
+  const groups: Line[][] = [];
+  lines.forEach((l, i) => {
+    if (i === 0 || l.para) groups.push([l]);
+    else groups[groups.length - 1].push(l);
+  });
+  return groups.map((g) => {
+    const { text, starts } = joinLinesMap(g.map((l) => l.text));
+    return { text, lineStarts: starts, linePages: g.map((l) => l.page + 1) };
+  });
 }
 
 export function linesToParagraphs(lines: Line[]): string[] {
-  const paras: string[][] = [];
-  lines.forEach((l, i) => {
-    if (i === 0 || l.para) paras.push([l.text]);
-    else paras[paras.length - 1].push(l.text);
-  });
-  return paras.map(joinLines);
+  return linesToParas(lines).map((p) => p.text);
+}
+
+/**
+ * Same sentence splitting as text.makeSection, but also records the 1-based page of every
+ * sentence (the page where it starts) and paragraph start indexes.
+ */
+export function buildSection(title: string, level: number, paras: Para[], page?: number): Section {
+  const sentences: string[] = [];
+  const pages: number[] = [];
+  const starts: number[] = [];
+  for (const p of paras) {
+    const ss = splitSentences(p.text);
+    if (!ss.length) continue;
+    starts.push(sentences.length);
+    let pos = 0;
+    for (const sen of ss) {
+      let idx = p.text.indexOf(sen.slice(0, Math.min(24, sen.length)), pos);
+      if (idx < 0) idx = Math.min(pos, Math.max(0, p.text.length - 1));
+      pos = p.text.startsWith(sen, idx) ? idx + sen.length : idx + 1;
+      let k = 0;
+      while (k + 1 < p.lineStarts.length && p.lineStarts[k + 1] <= idx) k++;
+      sentences.push(sen);
+      pages.push(p.linePages[k] ?? p.linePages[0] ?? 1);
+    }
+  }
+  return { title, level, sentences, charCount: sentences.reduce((n, s) => n + s.length, 0), page, paragraphs: starts, pages };
 }
 
 // ─── 4. chapters ───
@@ -318,7 +357,7 @@ function sectionsFromMarks(flat: Line[], marks: Mark[]): Section[] {
   const out: Section[] = [];
   const mk = (title: string, level: number, lines: Line[], page?: number) => {
     if (!lines.length) return;
-    const s = makeSection(title, level, linesToParagraphs(lines), page ?? lines[0].page + 1);
+    const s = buildSection(title, level, linesToParas(lines), page ?? lines[0].page + 1);
     if (s.sentences.length) out.push(s);
   };
   if (marks.length && marks[0].lineIdx > 0) mk('Beginning', 1, flat.slice(0, marks[0].lineIdx));
@@ -337,29 +376,74 @@ function sectionsByPages(flat: Line[], pageCount: number, per = 10): Section[] {
     const b = Math.min(pageCount, a + per);
     const lines = flat.filter((l) => l.page >= a && l.page < b);
     if (!lines.length) continue;
-    const s = makeSection(`Pages ${a + 1}–${b}`, 1, linesToParagraphs(lines), a + 1);
+    const s = buildSection(`Pages ${a + 1}–${b}`, 1, linesToParas(lines), a + 1);
     if (s.sentences.length) out.push(s);
   }
   return out;
 }
 
-/** Merges sections under `min` chars into the following one (or previous, for the last). */
+/** Merges sections under `min` chars into the following one (or previous, for the last). Keeps pages/paragraphs aligned. */
 export function mergeTiny(sections: Section[], min = 200): Section[] {
   const out: Section[] = [];
-  let carry: string[] = [];
-  const rebuild = (s: Section, sentences: string[]): Section => ({ ...s, sentences, charCount: sentences.reduce((n, x) => n + x.length, 0) });
+  let carry: Section | null = null; // fragment waiting to be prepended to the next section
+  const count = (s: Section) => s.sentences.length;
+  const pagesOf = (s: Section) => s.pages ?? [];
+  const parasOf = (s: Section) => s.paragraphs ?? [];
+  /** a followed by b, as one section carrying `base`'s title/level/page */
+  const concat = (base: Section, a: Section, b: Section): Section => {
+    const sentences = [...a.sentences, ...b.sentences];
+    const pages = a.pages || b.pages ? [...pagesOf(a), ...pagesOf(b)] : undefined;
+    const paragraphs = a.paragraphs || b.paragraphs ? [...parasOf(a), ...parasOf(b).map((i) => i + count(a))] : undefined;
+    return { ...base, sentences, pages, paragraphs, charCount: sentences.reduce((n, x) => n + x.length, 0) };
+  };
   for (const s of sections) {
     if (!s.sentences.length) continue;
-    const merged = carry.length ? rebuild(s, [...carry, ...s.sentences]) : s;
-    carry = [];
-    if (merged.charCount < min) carry = merged.sentences;
+    const merged: Section = carry ? concat(s, carry, s) : s;
+    carry = null;
+    if (merged.charCount < min) carry = merged;
     else out.push(merged);
   }
-  if (carry.length) {
-    if (out.length) { const last = out[out.length - 1]; out[out.length - 1] = rebuild(last, [...last.sentences, ...carry]); }
-    else out.push({ title: sections[0]?.title ?? 'Text', level: 1, sentences: carry, charCount: carry.reduce((n, x) => n + x.length, 0), page: sections[0]?.page });
+  if (carry) {
+    if (out.length) { const last = out[out.length - 1]; out[out.length - 1] = concat(last, last, carry); }
+    else out.push(carry);
   }
   return out;
+}
+
+/**
+ * Pages' lines -> sections: strips running headers/footers, finds paragraphs, then splits by the
+ * PDF outline, else detected headings, else 10-page chunks. Shared with OCR (see ocr.ts).
+ * `tweakFlags` may adjust paragraph flags (e.g. from OCR paragraph boundaries) before splitting.
+ */
+export async function sectionsFromPages(
+  doc: Pick<PdfDocLike, 'getOutline' | 'getDestination' | 'getPageIndex'> | null,
+  pages: PageLines[],
+  tweakFlags?: (flat: Line[]) => void,
+): Promise<{ sections: Section[]; method: ExtractResult['method'] }> {
+  const n = pages.length;
+  stripMargins(pages);
+  const body = medianBodySize(pages);
+  const flat = computeFlags(pages, body);
+  tweakFlags?.(flat);
+  await tick();
+
+  let sections: Section[] = [];
+  let method: ExtractResult['method'] = 'pages';
+
+  const entries = doc ? await resolveOutline(doc as PdfDocLike) : [];
+  if (entries.length >= 2) {
+    const s = mergeTiny(sectionsFromMarks(flat, marksFromOutline(flat, entries)));
+    if (s.length >= 2) { sections = s; method = 'outline'; }
+  }
+  if (!sections.length) {
+    const marks = detectHeadings(flat, body);
+    if (marks.length >= 2 && marks.length <= Math.max(6, n)) {
+      const s = mergeTiny(sectionsFromMarks(flat, marks));
+      if (s.length >= 2) { sections = s; method = 'headings'; }
+    }
+  }
+  if (!sections.length) sections = mergeTiny(sectionsByPages(flat, n));
+  return { sections, method };
 }
 
 // ─── driver ───
@@ -380,28 +464,7 @@ export async function extractDocument(doc: PdfDocLike, opts: ExtractOptions = {}
     }
   }
 
-  stripMargins(pages);
-  const body = medianBodySize(pages);
-  const flat = computeFlags(pages, body);
-  await tick();
-
-  let sections: Section[] = [];
-  let method: ExtractResult['method'] = 'pages';
-
-  const entries = await resolveOutline(doc);
-  if (entries.length >= 2) {
-    const s = mergeTiny(sectionsFromMarks(flat, marksFromOutline(flat, entries)));
-    if (s.length >= 2) { sections = s; method = 'outline'; }
-  }
-  if (!sections.length) {
-    const marks = detectHeadings(flat, body);
-    if (marks.length >= 2 && marks.length <= Math.max(6, n)) {
-      const s = mergeTiny(sectionsFromMarks(flat, marks));
-      if (s.length >= 2) { sections = s; method = 'headings'; }
-    }
-  }
-  if (!sections.length) sections = mergeTiny(sectionsByPages(flat, n));
-
+  const sections = await sectionsFromPages(doc, pages);
   opts.onProgress?.(1);
-  return { sections, totalChars: sections.reduce((a, s) => a + s.charCount, 0), pageCount: n, method };
+  return { sections: sections.sections, totalChars: sections.sections.reduce((a, s) => a + s.charCount, 0), pageCount: n, method: sections.method };
 }

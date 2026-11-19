@@ -38,3 +38,21 @@
 .q-fin-toggle { width: 100%; justify-content: space-between; display: flex; align-items: center; min-height: 44px; background: none; border: 0; padding: 0; font-size: 18px; font-weight: 700; cursor: pointer; margin-top: 20px; }
 .q-fin-toggle span.chev { transition: transform .2s; color: var(--fg-3); }
 .q-fin-toggle[aria-expanded='true'] span.chev { transform: rotate(90deg); }
+
+/* link / spoken sheets (src/wiki/actions.ts) */
+.wa-info { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; min-height: 24px; }
+.wa-thumb { width: 88px; height: 88px; object-fit: cover; border-radius: 10px; background: var(--bg-3); flex: none; }
+.wa-desc { margin: 0 0 12px; font-size: 14px; line-height: 1.4; }
+.wa-info .wa-desc { margin: 0; }
+.wa-actions { display: flex; flex-direction: column; gap: 8px; }
+.wa-actions .btn { min-height: 46px; justify-content: center; text-decoration: none; }
+.wa-audio { width: 100%; margin: 4px 0 12px; }
+.wa-parts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+
+/* discovery */
+.q-disc { margin-bottom: 4px; }
+.q-disc[hidden] { display: none; }
+.q-disc-toggle { margin-top: 8px; }
+.q-feat { background: var(--bg-2); border: 1px solid var(--border, var(--bg-3)); border-radius: 14px; padding: 12px; margin-top: 4px; }
+.q-feat-body { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+.q-feat-extract { margin: 0 0 10px; font-size: 14px; line-height: 1.4; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }

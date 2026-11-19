@@ -1,0 +1,17 @@
+.pr-toggles { display: flex; flex-direction: column; gap: 14px; }
+.pr-h { margin: 18px 0 8px; }
+.pr-sample { width: 100%; min-height: 72px; resize: vertical; font: inherit; box-sizing: border-box; }
+.pr-out { margin-top: 8px; padding: 10px 12px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--line); line-height: 1.45; word-break: break-word; }
+.pr-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.pr-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.pr-item .btn { min-height: 40px; padding: 0 10px; }
+.pr-pair { min-width: 0; word-break: break-word; }
+.pr-edit { align-items: stretch; flex-direction: column; }
+.pr-fields, .pr-add { display: flex; flex-direction: column; gap: 8px; }
+.pr-add { margin-top: 10px; }
+.pr-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.pr-check { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; font-size: 14px; }
+.pr-check input { width: 20px; height: 20px; }
+.pr-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.pr-hint { margin: 4px 2px; }
+.pr-hint[hidden] { display: none; }

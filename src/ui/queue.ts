@@ -8,6 +8,7 @@ import {
 import { controller } from '../player/controller';
 import { CHARS_PER_SEC, charsBefore } from '../text';
 import type { Item } from '../types';
+import { getFeatured, getMoreLike, type FeaturedArticle } from '../wiki/discover';
 import { addArticle, searchWiki, parseWikiInput, looksLikeWikiUrl, randomArticle, WikiError, type WikiHit } from '../wiki';
 
 const fmtDur = (sec: number) => {
@@ -44,6 +45,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   const clearBtn = h('button', { class: 'icon-btn q-clear', html: icons.close, 'aria-label': 'Clear search', hidden: true, onclick: () => { input.value = ''; onInput(true); input.focus(); } });
   const resultsEl = h('div', { class: 'q-results', hidden: true });
   const randomChip = h('button', { class: 'chip q-chip', onclick: () => doRandom() }, 'Random article');
+  const discoverEl = h('div', { class: 'q-disc' });
   const queueEl = h('div');
   const finEl = h('div');
 
@@ -52,7 +54,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     note,
     h('div', { class: 'q-search' }, h('span', { html: icons.search }), input, clearBtn),
     h('div', { class: 'q-chips' }, randomChip),
-    resultsEl, queueEl, finEl,
+    resultsEl, discoverEl, queueEl, finEl,
   );
 
   // ── offline banner ──
@@ -69,12 +71,14 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     queue = q; rate = s.rate || 1; lang = s.wikiLang || 'en';
     if (dragging) { dirty = true; return; }
     renderQueue(); renderFinished();
+    refreshDiscover();
   }
   const offs = [onChange('queue', load), onChange('items', load), onChange('settings', load)];
   const unsub = controller.subscribe((s) => {
     if (s.itemId === nowId) return;
     nowId = s.itemId;
     if (!dragging) renderQueue(); else dirty = true;
+    refreshDiscover();
   });
 
   // ── actions ──
@@ -139,14 +143,15 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     clearBtn.hidden = !input.value;
     clearTimeout(timer);
     const q = input.value.trim();
-    if (!q) { ctl?.abort(); seq++; resultsEl.hidden = true; resultsEl.replaceChildren(); return; }
+    syncDiscover();
+    if (!q) { ctl?.abort(); seq++; resultsEl.hidden = true; resultsEl.replaceChildren(); syncDiscover(); return; }
     if (looksLikeWikiUrl(q)) { showUrlResult(q); return; }
     timer = setTimeout(() => doSearch(q), immediate ? 0 : 300);
   }
   async function doSearch(q: string) {
     ctl?.abort(); ctl = new AbortController();
     const my = ++seq;
-    resultsEl.hidden = false;
+    resultsEl.hidden = false; syncDiscover();
     resultsEl.replaceChildren(h('div', { class: 'row gap', style: 'padding:12px 4px' }, h('div', { class: 'spinner' }), h('span', { class: 'muted' }, 'Searching…')));
     try {
       const hits = await searchWiki(q, lang, ctl.signal);
@@ -160,7 +165,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   }
   function showUrlResult(url: string) {
     const p = parseWikiInput(url, lang);
-    resultsEl.hidden = false;
+    resultsEl.hidden = false; syncDiscover();
     if (!p) { resultsEl.replaceChildren(h('div', { class: 'q-note err' }, 'That link is not a Wikipedia article.')); return; }
     renderResults([{ title: p.title, key: url, description: `Wikipedia (${p.lang})` }], '', 'Add this article');
   }
@@ -169,7 +174,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     try {
       const hit = await randomArticle(lang);
       input.value = ''; clearBtn.hidden = true; ctl?.abort(); seq++;
-      resultsEl.hidden = false;
+      resultsEl.hidden = false; syncDiscover();
       renderResults([hit], '', undefined, 'Random pick');
     } catch (e) { toast(errMsg(e)); }
     finally { randomChip.removeAttribute('disabled'); }
@@ -202,6 +207,72 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   }
   input.addEventListener('input', () => onInput());
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onInput(true); input.blur(); } });
+
+  // ── discovery (background; never blocks the queue) ──
+  let discOpen = localStorage.getItem('ls_discover_open') !== '0';
+  let featured: FeaturedArticle | null = null;
+  let featTried = '';
+  let likeSeed = '';
+  let likeHits: WikiHit[] = [];
+  let likeCtl: AbortController | undefined;
+  let discCtl: AbortController | undefined;
+  const syncDiscover = () => { discoverEl.hidden = !resultsEl.hidden || !!input.value.trim() || (!featured && !likeHits.length); };
+  function seedItem(): Item | undefined {
+    const cur = nowId ? items.get(nowId) : undefined;
+    if (cur && cur.kind === 'article') return cur;
+    const all = [...items.values()];
+    return all.filter((i) => i.finishedAt).sort((a, b) => b.finishedAt! - a.finishedAt!)[0]
+      ?? all.filter((i) => i.lastPlayedAt).sort((a, b) => b.lastPlayedAt! - a.lastPlayedAt!)[0];
+  }
+  function refreshDiscover() {
+    if (disposed) return;
+    const day = new Date().toISOString().slice(0, 10) + lang;
+    if (featTried !== day) {
+      featTried = day; discCtl?.abort(); discCtl = new AbortController();
+      getFeatured(lang, discCtl.signal).then((f) => { if (!disposed && f) { featured = f; renderDiscover(); } }).catch(() => {});
+    }
+    const seed = seedItem();
+    if (seed && seed.title !== likeSeed) {
+      likeSeed = seed.title; likeCtl?.abort(); likeCtl = new AbortController();
+      getMoreLike(lang, seed.title, 5, likeCtl.signal)
+        .then((hits) => { if (disposed || likeSeed !== seed.title) return; likeHits = hits.filter((x) => !items.has(articleKey(x))); renderDiscover(); })
+        .catch(() => {});
+    }
+  }
+  const articleKey = (x: WikiHit) => 'w_' + lang + '_' + x.title.replace(/ /g, '_');
+  function discRow(hit: WikiHit) {
+    return h('li', null, h('div', { class: 'q-row' },
+      h('button', { class: 'q-main', 'aria-label': `Add ${hit.title} to queue`, onclick: () => addToQueue(hit) },
+        thumb(hit.thumbnailUrl),
+        h('div', { class: 'q-text' }, h('div', { class: 'q-title' }, hit.title), hit.description ? h('div', { class: 'q-meta' }, hit.description) : null)),
+      h('button', { class: 'icon-btn q-act', html: icons.plus, 'aria-label': `Add ${hit.title} to queue`, onclick: () => addToQueue(hit) }),
+      h('button', { class: 'icon-btn q-act', html: icons.play, 'aria-label': `Play ${hit.title} now`, onclick: () => playNow(hit) })));
+  }
+  function renderDiscover() {
+    if (disposed) return;
+    syncDiscover();
+    if (!featured && !likeHits.length) { discoverEl.replaceChildren(); return; }
+    const toggle = h('button', { class: 'q-fin-toggle q-disc-toggle', 'aria-expanded': String(discOpen),
+      onclick: () => { discOpen = !discOpen; localStorage.setItem('ls_discover_open', discOpen ? '1' : '0'); renderDiscover(); } },
+      h('span', null, 'Discover'), h('span', { class: 'chev', html: icons.nextSentence }));
+    const kids: (Node | null)[] = [toggle];
+    if (discOpen) {
+      if (featured) {
+        const f = featured;
+        kids.push(h('div', { class: 'q-feat' },
+          h('p', { class: 'q-sub' }, "Today's featured article"),
+          h('div', { class: 'q-feat-body' }, thumb(f.thumbnailUrl),
+            h('div', { class: 'q-text' }, h('div', { class: 'q-title' }, f.title),
+              f.description ? h('div', { class: 'q-meta' }, f.description) : null)),
+          f.extract ? h('p', { class: 'q-feat-extract' }, f.extract) : null,
+          h('div', { class: 'row end gap' },
+            h('button', { class: 'btn', onclick: () => addToQueue(f) }, 'Add'),
+            h('button', { class: 'btn primary', onclick: () => playNow(f) }, 'Play'))));
+      }
+      if (likeHits.length) kids.push(h('p', { class: 'q-sub', style: 'margin-top:14px' }, `More like ${likeSeed}`), h('ul', { class: 'list q-list' }, likeHits.map(discRow)));
+    }
+    discoverEl.replaceChildren(...(kids.filter(Boolean) as Node[]));
+  }
 
   // ── queue rendering ──
   async function computeProgress(it: Item, bar: HTMLElement, meta: HTMLElement) {
@@ -373,7 +444,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   load();
   return () => {
     disposed = true;
-    clearTimeout(timer); ctl?.abort();
+    clearTimeout(timer); ctl?.abort(); likeCtl?.abort(); discCtl?.abort();
     offs.forEach((f) => f()); unsub();
     removeEventListener('online', syncOnline); removeEventListener('offline', syncOnline);
   };

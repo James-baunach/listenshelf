@@ -19,7 +19,9 @@ export async function resolve(spec, ctx, next) {
 }`), import.meta.url);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { extractDocument, joinLines } = await import(pathToFileURL(join(root, 'src/pdf/extract.ts')).href);
+const { extractDocument, joinLines, buildSection, linesToParas, linesToParagraphs } = await import(pathToFileURL(join(root, 'src/pdf/extract.ts')).href);
+const { buildPageText, layoutSentences, rectsFor, hitTest, wordStartAtKey } = await import(pathToFileURL(join(root, 'src/pdf/pagetext.ts')).href);
+const { makeSection } = await import(pathToFileURL(join(root, 'src/text.ts')).href);
 const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
 // ─── unit checks ───
@@ -28,6 +30,21 @@ assert.equal(joinLines(['a well-', 'known fact']), 'a well-known fact');
 assert.equal(joinLines(['the Anglo-', 'Saxon age']), 'the Anglo-Saxon age');
 assert.equal(joinLines(['no hyphen', 'here']), 'no hyphen here');
 console.log('joinLines unit checks OK');
+
+// A paragraph that continues across a page break: a sentence spanning the break gets the page where it starts.
+{
+  const L = (text, page, para) => ({ text, page, para, x: 0, xEnd: 0, y: 0, size: 10 });
+  const lines = [
+    L('The first sentence ends here. The second sentence starts on', 3, true),
+    L('page five and runs over. A third one follows it.', 4, false),
+    L('A fresh paragraph on page five. Another one.', 4, true),
+  ];
+  const sec = buildSection('t', 1, linesToParas(lines));
+  assert.deepEqual(sec.sentences, makeSection('t', 1, linesToParagraphs(lines)).sentences, 'buildSection must split like makeSection');
+  assert.deepEqual(sec.paragraphs, [0, 3]);
+  assert.deepEqual(sec.pages, [4, 4, 5, 5, 5]);
+  console.log('buildSection page-break unit check OK');
+}
 
 const files = process.argv.slice(2).length ? process.argv.slice(2)
   : [join(root, 'scripts/fixtures/sample.pdf'), join(root, 'scripts/fixtures/sample-nooutline.pdf')];
@@ -46,6 +63,48 @@ for (const file of files) {
   }
   const all = r.sections.flatMap((s) => s.sentences).join('\n');
   const check = (name, cond) => { if (!cond) { failures++; console.log('FAIL: ' + name); } else console.log('ok:   ' + name); };
+
+  // ─── page view mapping: every sentence must be locatable on its page, with rectangles and a working tap hit-test ───
+  {
+    const byPage = new Map();
+    r.sections.forEach((sec, si) => sec.sentences.forEach((x, j) => {
+      const p = sec.pages[j];
+      if (!byPage.has(p)) byPage.set(p, []);
+      byPage.get(p).push({ si, j, x });
+    }));
+    let total = 0, found = 0, withRects = 0, tapOk = 0, tapTried = 0;
+    for (const [p, list] of byPage) {
+      const page = await doc.getPage(p);
+      const vp = page.getViewport({ scale: 1 });
+      const pt = buildPageText(await page.getTextContent());
+      const lay = layoutSentences(pt, list.map((e) => e.x));
+      lay.forEach((rg, k) => {
+        total++;
+        if (!rg) return;
+        found++;
+        const rects = rectsFor(pt, rg, vp.transform, vp.width, vp.height);
+        if (rects.length && rects.every((q) => q.w > 0 && q.h > 0 && q.x >= -0.01 && q.y >= -0.01 && q.x + q.w <= 1.01 && q.y + q.h <= 1.01)) withRects++;
+        if (rects.length && k % 3 === 0) {
+          tapTried++;
+          const q = rects[0];
+          const hit = hitTest(pt, q.x + q.w * 0.5, q.y + q.h * 0.5, vp.transform, vp.width, vp.height);
+          const owner = hit ? lay.findIndex((l) => l && hit.keyIndex >= l.start && hit.keyIndex < l.end) : -1;
+          if (owner === k) tapOk++;
+        }
+      });
+    }
+    check(`page view: ${found}/${total} sentences located on their page (>=97%)`, found / total >= 0.97);
+    check(`page view: ${withRects}/${found} located sentences have sane rectangles`, withRects === found);
+    check(`page view: tap in the first rect maps back to the sentence (${tapOk}/${tapTried})`, tapOk / tapTried >= 0.95);
+  }
+  for (const sec of r.sections) {
+    const n = sec.sentences.length;
+    check(`pages parallel to sentences ("${sec.title}")`, Array.isArray(sec.pages) && sec.pages.length === n);
+    check(`pages non-decreasing, within 1..${r.pageCount} ("${sec.title}")`, sec.pages.every((p, i) => Number.isInteger(p) && p >= 1 && p <= r.pageCount && (i === 0 || p >= sec.pages[i - 1])));
+    check(`paragraphs sane ("${sec.title}")`, Array.isArray(sec.paragraphs) && sec.paragraphs[0] === 0 && sec.paragraphs.every((x, i) => x >= 0 && x < n && (i === 0 || x > sec.paragraphs[i - 1])));
+  }
+  check('sections progress through pages', r.sections.every((s, i) => i === 0 || s.pages[0] >= r.sections[i - 1].pages[r.sections[i - 1].pages.length - 1] - 1));
+  check('page span > 1', new Set(r.sections.flatMap((s) => s.pages)).size > 1);
   check('running header removed', !/Lantern Keepers/.test(all));
   check('page numbers removed', !/^\d{1,2}$/m.test(all) && !/\b\d{1,2}\s+(The|A)\s/.test(all.split('\n').filter((l) => /^\d/.test(l)).join('\n')));
   check('no lone-digit sentences', !r.sections.some((s) => s.sentences.some((x) => /^\d{1,3}$/.test(x))));

@@ -2,7 +2,10 @@
 // - Renders every section (lazily, as they scroll near) so you can browse the whole text.
 // - Underlines the sentence being read and follows it, unless you've scrolled away.
 // - Tap any word to start reading from that word.
+import './reader.css';
 import type { DocContent, SectionLink } from '../types';
+import { onChange } from '../db';
+import { bookmarkInfo } from './bookmarks';
 import { h } from './dom';
 
 export interface Reader {
@@ -50,15 +53,26 @@ export function createReader(opts: ReaderOptions): Reader {
     if (!b || b.rendered || !content) return;
     b.rendered = true;
     const sec = content.sections[i];
-    const p = h('p');
+    const paras = new Set(sec.paragraphs ?? [0]);
+    const linksBySent = new Map<number, SectionLink[]>();
+    for (const l of sec.links ?? []) {
+      const a = linksBySent.get(l.sentence);
+      if (a) a.push(l); else linksBySent.set(l.sentence, [l]);
+    }
+    const frag = document.createDocumentFragment();
+    let p = h('p');
     b.spans = sec.sentences.map((t, j) => {
-      const s = h('span', { class: 'sent', 'data-s': i, 'data-i': j }, t);
+      if (j > 0 && paras.has(j)) { frag.append(p); p = h('p'); }
+      const s = h('span', { class: 'sent', 'data-s': i, 'data-i': j });
+      fillSentence(s, t, linksBySent.get(j));
       p.append(s, ' ');
       return s;
     });
-    b.body.replaceChildren(p);
+    frag.append(p);
+    b.body.replaceChildren(frag);
     b.body.style.minHeight = '';
     io.unobserve(b.el);
+    applyMarks(i);
     if (i === pos.section) mark();
   }
 
@@ -77,7 +91,33 @@ export function createReader(opts: ReaderOptions): Reader {
     });
     scroller.replaceChildren(...blocks.map((b) => b.el));
     blocks.forEach((b) => io.observe(b.el));
+    marks = new Map();
+    void loadMarks();
   }
+
+  // Bookmark markers (section → sentence → has note).
+  let marks = new Map<number, Map<number, boolean>>();
+  let marksSeq = 0;
+  async function loadMarks() {
+    const seq = ++marksSeq, k = key;
+    if (!k) return;
+    let m: Map<number, Map<number, boolean>>;
+    try { m = await bookmarkInfo(k); } catch { return; }
+    if (seq !== marksSeq || k !== key) return;
+    marks = m;
+    blocks.forEach((_, i) => applyMarks(i));
+  }
+  function applyMarks(i: number) {
+    const b = blocks[i];
+    if (!b?.rendered) return;
+    const m = marks.get(i);
+    b.spans.forEach((sp, j) => {
+      const has = m?.has(j) ?? false;
+      sp.classList.toggle('bm', has);
+      sp.classList.toggle('bm-n', has && !!m!.get(j));
+    });
+  }
+  const offChange = onChange('bookmarks', () => { void loadMarks(); });
 
   function mark() {
     const b = blocks[pos.section];
@@ -125,16 +165,52 @@ export function createReader(opts: ReaderOptions): Reader {
   scroller.addEventListener('wheel', userScrolled, { passive: true });
   scroller.addEventListener('scroll', () => { if (!follow) jump.hidden = !!cur && isVisible(cur); }, { passive: true });
 
-  // Tap a word → start reading from that word.
-  scroller.addEventListener('click', (e) => {
+  // Long-press a sentence → onLongPress (e.g. bookmark with note).
+  let lp: { timer: number; x: number; y: number; span: HTMLElement } | null = null;
+  let suppressClick = 0;
+  const lpCancel = () => { if (lp) { clearTimeout(lp.timer); lp = null; } };
+  scroller.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     const span = (e.target as HTMLElement).closest('.sent') as HTMLElement | null;
+    lpCancel();
+    if (!span || !opts.onLongPress) return;
+    const timer = window.setTimeout(() => {
+      lp = null;
+      suppressClick = Date.now() + 100000; // cleared on pointerup
+      navigator.vibrate?.(15);
+      opts.onLongPress?.(Number(span.dataset.s), Number(span.dataset.i));
+    }, 500);
+    lp = { timer, x: e.clientX, y: e.clientY, span };
+  });
+  scroller.addEventListener('pointermove', (e) => {
+    if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) lpCancel();
+  });
+  const lpEnd = () => { lpCancel(); if (suppressClick) suppressClick = Date.now() + 400; };
+  scroller.addEventListener('pointerup', lpEnd);
+  scroller.addEventListener('pointercancel', () => { lpCancel(); suppressClick = 0; });
+  scroller.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Tap a word → start reading from that word; tap a link → onLink.
+  scroller.addEventListener('click', (e) => {
+    if (suppressClick) {
+      const stillHeld = suppressClick - Date.now() > 1000;
+      if (stillHeld || Date.now() < suppressClick) { e.preventDefault(); e.stopPropagation(); if (!stillHeld) suppressClick = 0; return; }
+      suppressClick = 0;
+    }
+    const target = e.target as HTMLElement;
+    const span = target.closest('.sent') as HTMLElement | null;
     if (!span) return;
     const section = Number(span.dataset.s), sentence = Number(span.dataset.i);
+    const lk = target.closest('.lk') as HTMLElement | null;
+    if (lk && opts.onLink) {
+      const link = content?.sections[section]?.links?.find((l) => l.sentence === sentence && l.start === Number(lk.dataset.a) && l.end === Number(lk.dataset.b));
+      if (link) { opts.onLink(link); return; }
+    }
     const text = span.textContent ?? '';
     let char = 0;
     const hit = caretAt(e.clientX, e.clientY);
     if (hit && span.contains(hit.node)) {
-      char = Math.min(hit.offset, text.length);
+      char = Math.min(charOffset(span, hit.node, hit.offset), text.length);
       while (char > 0 && !/\s/.test(text[char - 1])) char--; // snap to the start of the word
     }
     if (char > text.length - 2) char = 0;
@@ -146,7 +222,7 @@ export function createReader(opts: ReaderOptions): Reader {
   return {
     el, setContent, setPosition,
     shown() { follow = true; jump.hidden = true; requestAnimationFrame(() => scrollToCurrent(false)); setTimeout(() => scrollToCurrent(false), 60); },
-    destroy() { io.disconnect(); },
+    destroy() { io.disconnect(); offChange(); lpCancel(); },
   };
 }
 
@@ -161,15 +237,60 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | null {
   return r ? { node: r.startContainer, offset: r.startOffset } : null;
 }
 
+/** Fills a sentence span with text, wrapping link ranges in .lk spans. */
+function fillSentence(span: HTMLElement, text: string, links?: SectionLink[]) {
+  if (!links?.length) { span.textContent = text; return; }
+  const sorted = [...links].sort((a, b) => a.start - b.start);
+  let at = 0;
+  for (const l of sorted) {
+    const start = Math.max(l.start, at), end = Math.min(l.end, text.length);
+    if (end <= start) continue;
+    if (start > at) span.append(text.slice(at, start));
+    span.append(h('span', { class: 'lk', 'data-a': l.start, 'data-b': l.end }, text.slice(start, end)));
+    at = end;
+  }
+  if (at < text.length) span.append(text.slice(at));
+}
+
+/** Character offset within span's text for a (node, offset) caret position, across child text nodes. */
+function charOffset(span: HTMLElement, node: Node, offset: number): number {
+  const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+  let sum = 0;
+  if (node.nodeType !== Node.TEXT_NODE) {
+    // Element position: offset counts child nodes before the caret.
+    const before = document.createRange();
+    before.setStart(span, 0);
+    try { before.setEnd(node, offset); } catch { return 0; }
+    return before.toString().length;
+  }
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (n === node) return sum + offset;
+    sum += n.textContent?.length ?? 0;
+  }
+  return 0;
+}
+
+/** Finds the text node + local offset holding character `char` of the span's text. */
+function locate(span: HTMLElement, char: number): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+  let sum = 0, last: Text | null = null;
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    const len = n.data.length;
+    if (char < sum + len) return { node: n, offset: char - sum };
+    sum += len; last = n;
+  }
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
 /** Briefly highlights the tapped word so it's clear where reading starts. */
 function flashWord(span: HTMLElement, char: number) {
-  const node = span.firstChild;
-  if (!node || node.nodeType !== Node.TEXT_NODE) return;
-  const text = node.textContent ?? '';
-  const end = text.slice(char).search(/\s|$/) + char;
+  const text = span.textContent ?? '';
+  const end = Math.max(char + 1, text.slice(char).search(/\s|$/) + char);
+  const a = locate(span, char), z = locate(span, end - 1);
+  if (!a || !z) return;
   try {
     const range = document.createRange();
-    range.setStart(node, char); range.setEnd(node, Math.max(char + 1, end));
+    range.setStart(a.node, a.offset); range.setEnd(z.node, Math.min(z.node.data.length, z.offset + 1));
     const rect = range.getBoundingClientRect();
     const host = span.closest('.rd') as HTMLElement | null;
     if (!host || !rect.width) return;

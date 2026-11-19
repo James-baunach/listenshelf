@@ -173,7 +173,11 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
         h('p', { class: 'muted small' }, 'This will be ready to play shortly.'),
         h('div', { class: 'progress' }, h('i', { style: `width:${p}%` })));
     } else if (item && item.status === 'no-text') {
-      msg = h('div', null, h('b', null, 'No readable text'), h('p', { class: 'muted small' }, 'This PDF seems to be scanned pages (images), and scanned PDFs are not supported yet. Try a PDF with selectable text.'));
+      const itemId = item.id;
+      msg = h('div', null, h('b', null, 'No readable text'),
+        h('p', { class: 'muted small' }, 'This PDF looks like scanned pages (pictures of text). Text recognition (OCR) can read it on your phone. It is slow, roughly a few seconds per page, so keep the app open.'),
+        item.error && item.error !== 'No readable text found. This looks like a scanned PDF.' ? h('p', { class: 'small faint' }, item.error) : null,
+        h('button', { class: 'btn primary', onclick: () => { void import('../pdf/ocr').then((m) => m.ocrBook(itemId)).catch((e) => toast(e instanceof Error ? e.message : 'Text recognition failed')); } }, 'Recognize text (OCR)'));
     } else if (st.error) {
       msg = h('div', null, h('b', null, 'Something went wrong'), h('p', { class: 'muted small' }, st.error));
     }
@@ -238,8 +242,18 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
 
   let readerShownFor = '';
   let pageShownFor = '';
+  let pageMapTried = '';
+  /** PDFs imported before page view existed lack per-sentence pages: rebuild them in the background. */
+  function maybeBackfillPages() {
+    const item = st.item;
+    if (!item || !st.content || item.kind !== 'book' || item.format === 'epub' || item.status !== 'ready') return;
+    if (pageMapTried === item.id || st.content.sections.every((x) => x.pages?.length === x.sentences.length)) return;
+    pageMapTried = item.id;
+    void import('../pdf/pagemap').then((m) => m.ensurePageMap(item.id)).catch(() => {});
+  }
   function renderText() {
     if (!st.content || !st.itemId || !st.item) return;
+    maybeBackfillPages();
     const v = effectiveView();
     if (v === 'text') {
       reader.setContent(st.itemId, st.content);

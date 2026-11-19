@@ -1,7 +1,7 @@
 // Library page: bookshelf grid of imported PDFs.
 import './library.css';
 import { deleteItem, getCover, listItems, onChange, updateItem } from '../db';
-import { importPdfs, resumeStalled } from '../pdf/import';
+import { importBooks, resumeStalledBooks } from '../import';
 import { controller } from '../player/controller';
 import type { Item } from '../types';
 import { confirmSheet, go, h, promptSheet, sheet, toast } from './dom';
@@ -38,21 +38,21 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   const cards = new Map<string, Card>();
 
   // ─── static skeleton ───
-  const input = h('input', { type: 'file', accept: 'application/pdf,.pdf', multiple: true, hidden: true, onchange: () => {
+  const input = h('input', { type: 'file', accept: 'application/pdf,.pdf,application/epub+zip,.epub', multiple: true, hidden: true, onchange: () => {
     const files = Array.from(input.files ?? []);
     input.value = '';
     addFiles(files);
   } });
-  const addBtn = h('button', { class: 'icon-btn', 'aria-label': 'Add PDFs', html: icons.plus, onclick: () => input.click() });
+  const addBtn = h('button', { class: 'icon-btn', 'aria-label': 'Add books', html: icons.plus, onclick: () => input.click() });
   const hero = h('div');
   const chips = h('div', { class: 'lib-sort' });
   const grid = h('div', { class: 'lib-grid' });
   const empty = h('div', { class: 'empty' },
     h('div', { html: icons.books }),
     h('h2', null, 'Your shelf is empty'),
-    h('p', null, 'Add a PDF book and ListenShelf will read it aloud, chapter by chapter. Your books stay on this device and work offline.'),
-    h('button', { class: 'btn primary', onclick: () => input.click() }, 'Add PDFs'));
-  const drop = h('div', { class: 'lib-drop' }, 'Drop PDFs to add them');
+    h('p', null, 'Add a PDF or EPUB book and ListenShelf will read it aloud, chapter by chapter. Your books stay on this device and work offline.'),
+    h('button', { class: 'btn primary', onclick: () => input.click() }, 'Add books'));
+  const drop = h('div', { class: 'lib-drop' }, 'Drop PDF or EPUB files to add them');
   const page = h('div', { class: 'lib' },
     h('div', { class: 'page-head' }, h('h1', null, 'Books'), addBtn),
     hero, chips, grid, empty, input, drop);
@@ -66,10 +66,10 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   }
 
   async function addFiles(files: File[]) {
-    const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-    if (!pdfs.length) { if (files.length) toast('Only PDF files can be added'); return; }
-    toast(pdfs.length === 1 ? 'Adding book…' : `Adding ${pdfs.length} books…`);
-    try { await importPdfs(pdfs); } catch (e) { console.error(e); toast('Could not add that file'); }
+    if (!files.length) return;
+    const ok = files.filter((f) => /\.(pdf|epub)$/i.test(f.name) || /^application\/(pdf|epub\+zip)$/.test(f.type));
+    if (ok.length) toast(ok.length === 1 ? 'Adding book…' : `Adding ${ok.length} books…`);
+    try { await importBooks(files); } catch (e) { console.error(e); toast('Could not add that file'); }
   }
 
   // ─── drag & drop (desktop) ───
@@ -130,6 +130,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     overlay: HTMLElement | null = null;
     titleEl: HTMLElement; authorEl: HTMLElement; bar: HTMLElement;
     badge: HTMLElement | null = null;
+    fmt: HTMLElement;
     item: Item;
     coverKey = '';
     private pressTimer = 0;
@@ -141,6 +142,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
       this.titleEl = h('div', { class: 'lib-title' });
       this.authorEl = h('div', { class: 'lib-author ellipsis' });
       this.bar = h('i');
+      this.fmt = h('div', { class: 'lib-fmt' });
       const more = h('button', { class: 'icon-btn lib-more', 'aria-label': 'Book options', html: icons.more, onclick: (e: Event) => { e.stopPropagation(); openMenu(this.item); } });
       this.el = h('div', { class: 'lib-card' }, this.cover,
         h('div', { class: 'lib-info' }, h('div', { class: 'txt' }, this.titleEl, this.authorEl, h('div', { class: 'progress' }, this.bar)), more));
@@ -156,6 +158,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
       });
       this.cover.addEventListener('click', () => { if (this.pressed) { this.pressed = false; return; } openItem(this.item); });
       this.cover.addEventListener('contextmenu', (e) => e.preventDefault());
+      this.cover.appendChild(this.fmt);
       this.update(it);
     }
 
@@ -190,12 +193,26 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
         if (prev.status !== 'processing' || !this.overlay) {
           this.setOverlay(h('div', { class: 'lib-over' }, h('div', { class: 'spinner' }), h('strong', null, pct + '%'), h('span', null, 'Preparing…')));
         } else this.overlay.querySelector('strong')!.textContent = pct + '%';
-      } else if (it.status === 'error' || it.status === 'no-text') {
+      } else if (it.status === 'no-text') {
+        if (prev.status === it.status && this.overlay) { /* unchanged */ } else {
+          const id = it.id;
+          this.setOverlay(h('div', { class: 'lib-over err' },
+            h('span', null, 'No readable text found. This looks like a scanned book.'),
+            h('button', { class: 'btn primary', style: 'min-height:44px', onclick: (e: Event) => {
+              e.stopPropagation();
+              import('../pdf/ocr').then((m) => m.ocrBook(id)).catch((err) => { console.error(err); toast('Could not start text recognition'); });
+            } }, 'Recognize text (OCR)'),
+            h('small', { class: 'lib-ocr-note' }, 'Slow: about a few seconds per page. Keep the app open.'),
+            h('button', { class: 'btn danger', style: 'min-height:44px', onclick: (e: Event) => { e.stopPropagation(); openMenu(this.item); } }, 'Delete…')));
+        }
+      } else if (it.status === 'error') {
         if (prev.status === it.status && prev.error === it.error && this.overlay) { /* unchanged */ } else {
-          this.setOverlay(h('div', { class: 'lib-over err' }, h('span', null, it.error ?? (it.status === 'no-text' ? 'No readable text found.' : 'Could not read this PDF.')),
+          this.setOverlay(h('div', { class: 'lib-over err' }, h('span', null, it.error ?? 'Could not read this book.'),
             h('button', { class: 'btn danger', style: 'min-height:44px', onclick: (e: Event) => { e.stopPropagation(); openMenu(this.item); } }, 'Delete…')));
         }
       } else if (this.overlay) this.setOverlay(null);
+
+      this.fmt.textContent = (it.format === 'epub' ? 'EPUB' : 'PDF') + (it.ocr ? ' · OCR' : '');
 
       // finished badge
       if (it.finishedAt && it.status === 'ready') {
@@ -272,7 +289,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
   }
 
   renderChips();
-  refresh().then(() => { if (!disposed) resumeStalled().catch(console.error); });
+  refresh().then(() => { if (!disposed) resumeStalledBooks().catch(console.error); });
   const off = onChange('items', refresh);
 
   return () => {

@@ -1,7 +1,8 @@
 // Live engine: speaks one sentence at a time with window.speechSynthesis.
 // One utterance per sentence avoids Chrome's ~15 s cut-off for long utterances.
 import type { EnginePlayRequest, PlaybackEngine } from '../types';
-import { CHARS_PER_SEC, stripParentheticals } from '../text';
+import { CHARS_PER_SEC } from '../text';
+import { prepareForSpeech } from '../speech';
 
 /** Incremented on every play() and abort; stale callbacks compare against it. */
 let gen = 0;
@@ -93,7 +94,7 @@ export const liveEngine: PlaybackEngine = {
         if (signal.aborted || myGen !== gen) return 'aborted';
         let raw = req.sentences[i];
         if (i === req.startSentence && req.startChar) raw = raw.slice(req.startChar);
-        const text = req.settings.skipParentheticals ? stripParentheticals(raw) : raw;
+        const text = prepareForSpeech(raw, req.settings);
         if (!/[\p{L}\p{N}]/u.test(text)) { req.onSentence(i); continue; }
         const t0 = Date.now();
         let started = false;

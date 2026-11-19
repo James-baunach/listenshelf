@@ -42,6 +42,16 @@ export function toast(msg: string, ms = 2600) {
  * Opens a bottom sheet. Returns a close() function. The sheet closes on
  * backdrop tap or the Android back button.
  */
+// Sheets stack: each pushes one history entry; the Android back button (popstate)
+// closes only the TOP sheet. Closing a sheet in code pops its own entry, and that
+// self-inflicted popstate is swallowed so it doesn't close the sheet beneath.
+const sheetStack: { dismiss: () => void }[] = [];
+let swallowPops = 0;
+window.addEventListener('popstate', () => {
+  if (swallowPops > 0) { swallowPops--; return; }
+  sheetStack[sheetStack.length - 1]?.dismiss();
+});
+
 export function sheet(title: string, body: Node, opts: { onClose?: () => void } = {}): () => void {
   const panel = h('div', { class: 'sheet', role: 'dialog', 'aria-label': title },
     h('div', { class: 'sheet-grip' }),
@@ -49,19 +59,22 @@ export function sheet(title: string, body: Node, opts: { onClose?: () => void } 
     h('div', { class: 'sheet-body' }, body));
   const backdrop = h('div', { class: 'sheet-backdrop' }, panel);
   let closed = false;
-  const close = () => {
+  const entry = { dismiss: () => teardown() };
+  /** Removes the sheet. fromCode: closed by a button/backdrop, so pop our own history entry. */
+  function teardown(fromCode = false) {
     if (closed) return;
     closed = true;
+    const idx = sheetStack.indexOf(entry);
+    if (idx >= 0) sheetStack.splice(idx, 1);
     backdrop.classList.remove('open');
-    window.removeEventListener('popstate', onPop);
     setTimeout(() => backdrop.remove(), 250);
+    if (fromCode && history.state?.sheet) { swallowPops++; history.back(); }
     opts.onClose?.();
-    if (history.state?.sheet) history.back();
-  };
-  const onPop = () => { if (!closed) { closed = true; backdrop.classList.remove('open'); setTimeout(() => backdrop.remove(), 250); opts.onClose?.(); window.removeEventListener('popstate', onPop); } };
+  }
+  const close = () => teardown(true);
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   history.pushState({ sheet: true }, '');
-  window.addEventListener('popstate', onPop);
+  sheetStack.push(entry);
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add('open'));
   return close;

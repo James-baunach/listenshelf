@@ -33,7 +33,7 @@ export function db() {
 }
 
 // ─── change notifications (same tab + other tabs) ───
-type Topic = 'items' | 'queue' | 'settings' | 'audio' | 'bookmarks';
+type Topic = 'items' | 'queue' | 'settings' | 'audio' | 'bookmarks' | 'content';
 const listeners = new Map<Topic, Set<() => void>>();
 const bc = 'BroadcastChannel' in self ? new BroadcastChannel('listenshelf') : null;
 bc?.addEventListener('message', (e) => fire(e.data as Topic, false));
@@ -95,6 +95,7 @@ export async function deleteItem(id: string) {
   await tx.done;
   const q = await getQueue();
   if (q.includes(id)) await setQueue(q.filter((x) => x !== id));
+  await d.delete('kv', `ocrwords:${id}`); // OCR word boxes (src/pdf/ocrlayout.ts)
   fire('items'); fire('audio'); fire('bookmarks');
 }
 
@@ -112,7 +113,9 @@ export async function deleteBookmark(id: string) { await (await db()).delete('bo
 
 // ─── content / files / covers ───
 export async function getContent(id: string) { return (await db()).get('content', id); }
-export async function putContent(c: DocContent) { await (await db()).put('content', c); }
+export async function putContent(c: DocContent) { await (await db()).put('content', c); lastContentId = c.id; fire('content'); }
+/** Id of the most recent putContent in this tab (lets listeners skip unrelated content changes). */
+export let lastContentId = '';
 export async function getFile(id: string) { return (await db()).get('files', id); }
 export async function putFile(id: string, blob: Blob, name: string) { await (await db()).put('files', { id, blob, name }); }
 export async function getCover(id: string) { return (await db()).get('covers', id).then((r) => r?.blob); }

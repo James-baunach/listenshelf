@@ -26,6 +26,21 @@ export default defineConfig({
         orientation: 'portrait',
         start_url: './',
         scope: './',
+        // Android share sheet: share a PDF/EPUB file or a Wikipedia link to ListenShelf (handled in src/sw.ts + src/share.ts).
+        share_target: {
+          action: './share-target',
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: {
+            title: 'title', text: 'text', url: 'url',
+            files: [{ name: 'files', accept: ['application/pdf', '.pdf', 'application/epub+zip', '.epub'] }],
+          },
+        },
+        // Desktop Chrome: "Open with ListenShelf" for PDF/EPUB files (see launchQueue in src/share.ts).
+        file_handlers: [{
+          action: './',
+          accept: { 'application/pdf': ['.pdf'], 'application/epub+zip': ['.epub'] },
+        }],
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -41,7 +56,7 @@ export default defineConfig({
         // worker + onnxruntime wasm (~24 MB) are fetched on first use and runtime-cached;
         // the voice model itself is cached by transformers.js (Cache API).
         globPatterns: ['**/*.{js,css,html,svg,png,mjs}'],
-        globIgnores: ['**/ort-wasm*', '**/worker-*.js'],
+        globIgnores: ['**/ort-wasm*', '**/worker-*.js', '**/tesseract-core*', '**/worker.min-*'],
         maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
       },
     }),
