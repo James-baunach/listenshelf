@@ -2,7 +2,7 @@
 // - Renders every section (lazily, as they scroll near) so you can browse the whole text.
 // - Underlines the sentence being read and follows it, unless you've scrolled away.
 // - Tap any word to start reading from that word.
-import type { DocContent } from '../types';
+import type { DocContent, SectionLink } from '../types';
 import { h } from './dom';
 
 export interface Reader {
@@ -18,7 +18,17 @@ export interface Reader {
 
 interface Block { el: HTMLElement; body: HTMLElement; rendered: boolean; spans: HTMLElement[] }
 
-export function createReader(onPick: (section: number, sentence: number, char: number) => void): Reader {
+export interface ReaderOptions {
+  /** Tap a word: start reading at that word. */
+  onPick: (section: number, sentence: number, char: number) => void;
+  /** Long-press a sentence (e.g. add a bookmark with a note). */
+  onLongPress?: (section: number, sentence: number) => void;
+  /** Tap a link (articles): the link's target. */
+  onLink?: (link: SectionLink) => void;
+}
+
+export function createReader(opts: ReaderOptions): Reader {
+  const { onPick } = opts;
   const scroller = h('div', { class: 'rd-scroll' });
   const jump = h('button', { class: 'rd-jump', hidden: true, onclick: () => { follow = true; jump.hidden = true; scrollToCurrent(true); } }, 'Back to reading position');
   const el = h('div', { class: 'rd' }, scroller, jump);

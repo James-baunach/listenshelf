@@ -1,7 +1,8 @@
 // Settings page: #/settings
 import './settings.css';
 import type { Settings } from '../types';
-import { exportBackup, getSettings, saveSettings } from '../db';
+import { exportBackup, getSettings, importBackup, saveSettings } from '../db';
+import { mountSpeechSettings } from './pronunciation';
 import { controller } from '../player/controller';
 import { pocket } from '../pocket';
 import { mountPocketSettings } from '../pocket/ui';
@@ -114,6 +115,11 @@ export function mount(root: HTMLElement) {
     section('Live voice', voiceSel, h('div', { class: 'row end', style: 'margin-top:10px' }, test),
       h('p', { class: 'small faint' }, 'More voices can be installed in Android Settings, System, Languages, Text-to-speech output.'));
 
+    // ─── Speech cleanup & pronunciation ───
+    const speechBox = h('div');
+    section('Speech cleanup & pronunciation', speechBox);
+    cleanups.push(mountSpeechSettings(speechBox));
+
     // ─── Pocket ───
     const pocketBox = h('div');
     section('Pocket mode', pocketBox);
@@ -174,8 +180,20 @@ export function mount(root: HTMLElement) {
         const a = h('a', { href: url, download: `listenshelf-backup-${new Date().toISOString().slice(0, 10)}.json` });
         document.body.append(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
-        toast('Backup saved (library info and positions, not PDFs or audio)');
-      } }, 'Export backup')));
+        toast('Backup saved (library info, positions and bookmarks; not PDFs or audio)');
+      } }, 'Export backup'),
+      h('button', { class: 'btn', onclick: () => {
+        const input = h('input', { type: 'file', accept: 'application/json,.json' }) as HTMLInputElement;
+        input.onchange = async () => {
+          const f = input.files?.[0];
+          if (!f) return;
+          try {
+            const r = await importBackup(JSON.parse(await f.text()));
+            toast(`Restored: ${r.positions} positions, ${r.bookmarks} bookmarks, ${r.articles} articles to re-download${r.skippedBooks ? `; ${r.skippedBooks} books need their PDFs re-added` : ''}`, 5000);
+          } catch (e) { toast(e instanceof Error ? e.message : 'Could not read that backup file.'); }
+        };
+        input.click();
+      } }, 'Restore backup')));
 
     // ─── About ───
     section('About', h('div', null, `ListenShelf ${VERSION}`),

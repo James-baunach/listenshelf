@@ -60,8 +60,15 @@ function chunk(s: string, maxLen: number): string[] {
 
 /** Builds a Section from a title and a list of paragraphs. */
 export function makeSection(title: string, level: number, paragraphs: string[], page?: number): Section {
-  const sentences = paragraphs.flatMap((p) => splitSentences(p));
-  return { title, level, sentences, charCount: sentences.reduce((n, s) => n + s.length, 0), page };
+  const sentences: string[] = [];
+  const starts: number[] = [];
+  for (const p of paragraphs) {
+    const ss = splitSentences(p);
+    if (!ss.length) continue;
+    starts.push(sentences.length);
+    sentences.push(...ss);
+  }
+  return { title, level, sentences, charCount: sentences.reduce((n, s) => n + s.length, 0), page, paragraphs: starts };
 }
 
 /** Removes parenthetical asides, used when settings.skipParentheticals is on. */

@@ -34,6 +34,12 @@ export interface Item {
   /** Total characters across all sections (for progress %). 0 until processed. */
   totalChars: number;
   sectionCount: number;
+  /** Books: original file format. Missing = 'pdf' (items created before EPUB support). */
+  format?: 'pdf' | 'epub';
+  /** Books: text came from OCR of a scanned PDF (quality may be lower). */
+  ocr?: boolean;
+  /** Articles: URL of a human-read Spoken Wikipedia recording, if the article has one. */
+  spokenAudioUrl?: string;
 }
 
 export interface Section {
@@ -45,6 +51,43 @@ export interface Section {
   charCount: number;
   /** Books: 1-based PDF page this section starts on (optional) */
   page?: number;
+  /** Sentence indexes that begin a new paragraph (always includes 0 when present). Optional. */
+  paragraphs?: number[];
+  /** PDFs: 1-based page number of each sentence (parallel to `sentences`). Enables page view. */
+  pages?: number[];
+  /** Articles: links found in the text, for "tap a link to queue it". */
+  links?: SectionLink[];
+}
+
+/** A hyperlink inside a sentence: sentences[sentence].slice(start, end) is the link text. */
+export interface SectionLink {
+  sentence: number;
+  start: number;
+  end: number;
+  /** Target Wikipedia article title (same language as the item). */
+  title: string;
+}
+
+/** A bookmark (optionally with a note) at a sentence. Stored in the `bookmarks` store. */
+export interface Bookmark {
+  id: string; // 'm_' + random
+  itemId: string;
+  section: number;
+  sentence: number;
+  /** Snapshot of the sentence text, so the list reads well without loading content. */
+  quote: string;
+  note?: string;
+  createdAt: number;
+}
+
+/** A pronunciation fix applied before speaking (Live) and before rendering audio (Pocket). */
+export interface Pronunciation {
+  from: string;
+  to: string;
+  /** Match whole words only (default true). */
+  wholeWord?: boolean;
+  /** Case-sensitive match (default false). */
+  caseSensitive?: boolean;
 }
 
 /** Stored in the `content` store, keyed by item id. Loaded only when playing. */
@@ -72,6 +115,13 @@ export interface Settings {
   wikiSkipSections: string[];
   wikiLang: string; // default 'en'
   theme: 'dark' | 'light' | 'system';
+  /** Speech cleanup (applied at speak/render time, not stored in content). */
+  skipUrls: boolean;
+  /** Skip cross-references like "(see Figure 3)", "(Table 2)", "(p. 45)". */
+  skipReferences: boolean;
+  /** Skip footnote markers like "word12" / "word*" / "[3]". */
+  skipFootnoteMarkers: boolean;
+  pronunciations: Pronunciation[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -88,6 +138,10 @@ export const DEFAULT_SETTINGS: Settings = {
   ],
   wikiLang: 'en',
   theme: 'dark',
+  skipUrls: true,
+  skipReferences: true,
+  skipFootnoteMarkers: true,
+  pronunciations: [],
 };
 
 /** Pre-rendered neural audio for one section. Stored in the `audio` store. */

@@ -9,8 +9,14 @@ import { CHARS_PER_SEC, charsBefore, fmtTime } from '../text';
 import { go, h, sheet, toast } from './dom';
 import { icons } from './icons';
 import { createReader } from './reader';
+import { createPageView } from './pageview';
+import { addBookmarkAt, openBookmarksSheet } from './bookmarks';
+import { openLinkActions, openSpokenRecording } from '../wiki/actions';
 
-const TEXT_PREF = 'listenshelf.textView';
+const VIEW_PREF = 'listenshelf.view';
+type View = 'cover' | 'text' | 'page';
+const bookmarkIcon = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4z"/></svg>';
+const pageIcon = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/><path d="M8 13h8M8 17h5"/></svg>';
 const externalIcon = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
 const skipIcon = (fwd: boolean, n: number) =>
@@ -26,7 +32,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   let settings: Settings = DEFAULT_SETTINGS;
   let st: PlayerState = controller.getState();
   let pst: PocketStatus = pocket.getStatus();
-  let textView = localStorage.getItem(TEXT_PREF) === '1';
+  let view: View = (localStorage.getItem(VIEW_PREF) as View) || 'cover';
   let dragging = false;
   let cover: CoverSource | null = null;
   let coverKey = '';
@@ -39,14 +45,27 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   const badge = h('span', { class: 'pl-badge' });
   const moreBtn = h('button', { class: 'icon-btn', 'aria-label': 'More', html: icons.more, onclick: openMenu });
   const wikiBtn = h('a', { class: 'icon-btn', 'aria-label': 'Open on Wikipedia', title: 'Open on Wikipedia', target: '_blank', rel: 'noopener', html: externalIcon, hidden: true });
-  const top = h('div', { class: 'pl-top' }, backBtn, h('div', { class: 'grow pl-topmid' }, kind, badge), wikiBtn, moreBtn);
+  const bmBtn = h('button', { class: 'icon-btn', 'aria-label': 'Add bookmark', title: 'Bookmark (hold for a note)', html: bookmarkIcon, onclick: () => bookmarkHere(false) });
+  let bmHold: ReturnType<typeof setTimeout> | null = null;
+  bmBtn.addEventListener('pointerdown', () => { bmHold = setTimeout(() => { bmHold = null; bookmarkHere(true); }, 550); });
+  bmBtn.addEventListener('pointerup', () => { if (bmHold) clearTimeout(bmHold); });
+  bmBtn.addEventListener('pointerleave', () => { if (bmHold) clearTimeout(bmHold); });
+  bmBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+  const top = h('div', { class: 'pl-top' }, backBtn, h('div', { class: 'grow pl-topmid' }, kind, badge), bmBtn, wikiBtn, moreBtn);
 
   const coverBox = h('div', { class: 'pl-cover' });
-  const reader = createReader((section, sentence, char) => {
+  const startAt = (section: number, sentence: number, char = 0) => {
     controller.goTo(section, sentence, char);
     if (!controller.getState().playing) controller.play();
+  };
+  const reader = createReader({
+    onPick: startAt,
+    onLongPress: (section, sentence) => { if (st.itemId && st.content) void addBookmarkAt(st.itemId, st.content, section, sentence, { withNote: true }); },
+    onLink: (link) => { if (st.item) openLinkActions(st.item, link); },
   });
   const textPane = h('div', { class: 'pl-text', hidden: true }, reader.el);
+  const pageView = createPageView({ onPick: startAt });
+  const pagePane = h('div', { class: 'pl-text pl-page', hidden: true }, pageView.el);
   const titleEl = h('h1', { class: 'pl-title' });
   const secBtn = h('button', { class: 'pl-section', onclick: openChapters });
   const statusBox = h('div', { class: 'pl-status card', hidden: true });
@@ -72,7 +91,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   const sleepLabel = h('span');
   const bSleep = h('button', { class: 'pl-pill', 'aria-label': 'Sleep timer', onclick: openSleep }, h('span', { html: icons.moon }), sleepLabel);
   const bChapters = h('button', { class: 'icon-btn', 'aria-label': 'Chapters', html: icons.list, onclick: openChapters });
-  const bText = h('button', { class: 'icon-btn', 'aria-label': 'Text view', html: icons.text, onclick: toggleText });
+  const bText = h('button', { class: 'icon-btn', 'aria-label': 'Change view', html: icons.text, onclick: cycleView });
   const tools = h('div', { class: 'pl-tools' }, bPrevSent, bNextSent, bSpeed, bSleep, bChapters, bText);
 
   const bPrepare = h('button', { class: 'btn pl-prepare', onclick: openPrepare, hidden: true }, h('span', { html: icons.download }), 'Prepare for offline / locked-screen listening');
@@ -80,7 +99,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   const controls = h('div', { class: 'pl-controls' },
     h('div', { class: 'pl-seek' }, seek, h('div', { class: 'row between small muted' }, seekLabel, remainLabel), overall),
     transport, tools, bPrepare);
-  const page = h('div', { class: 'pl' }, top, coverBox, textPane, titleEl, secBtn, statusBox, prepBox, controls);
+  const page = h('div', { class: 'pl' }, top, coverBox, textPane, pagePane, titleEl, secBtn, statusBox, prepBox, controls);
   root.replaceChildren(page);
 
   // swipe down on cover returns
@@ -91,11 +110,23 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     if (t.clientY - sy > 90 && Math.abs(t.clientX - sx) < 60) goBack();
   }, { passive: true });
 
-  function toggleText() {
-    textView = !textView;
-    localStorage.setItem(TEXT_PREF, textView ? '1' : '0');
+  /** Page view needs per-sentence page numbers, which only PDF books have. */
+  const hasPages = () => !!st.content?.sections.some((x) => x.pages?.length) && st.item?.kind === 'book' && st.item.format !== 'epub';
+  function setView(v: View) {
+    view = v;
+    localStorage.setItem(VIEW_PREF, v);
     renderAll();
-    if (textView) reader.shown();
+    if (v === 'text') reader.shown();
+    if (v === 'page') pageView.shown();
+  }
+  function cycleView() {
+    const order: View[] = hasPages() ? ['cover', 'text', 'page'] : ['cover', 'text'];
+    setView(order[(order.indexOf(effectiveView()) + 1) % order.length]);
+  }
+  const effectiveView = (): View => (view === 'page' && !hasPages() ? 'text' : view);
+  function bookmarkHere(withNote: boolean) {
+    if (!st.itemId || !st.content) return;
+    void addBookmarkAt(st.itemId, st.content, st.section, st.sentence, { withNote });
   }
 
   function goBack() {
@@ -125,9 +156,13 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     bPlay.innerHTML = st.playing && st.loading ? '<span class="spinner"></span>' : st.playing ? icons.pause : icons.play;
     bPlay.setAttribute('aria-label', st.playing ? 'Pause' : 'Play');
     bSpeed.textContent = `${+settings.rate.toFixed(2)}×`;
-    bText.classList.toggle('on', textView);
-    coverBox.hidden = textView; textPane.hidden = !textView;
-    page.classList.toggle('textmode', textView);
+    const v = effectiveView();
+    bText.classList.toggle('on', v !== 'cover');
+    bText.innerHTML = v === 'page' ? pageIcon : icons.text;
+    bText.setAttribute('aria-label', v === 'cover' ? 'Show text' : v === 'text' && hasPages() ? 'Show PDF pages' : 'Show cover');
+    coverBox.hidden = v !== 'cover'; textPane.hidden = v !== 'text'; pagePane.hidden = v !== 'page';
+    page.classList.toggle('textmode', v !== 'cover');
+    bmBtn.hidden = !st.content;
 
     // status / errors
     const ready = !!st.content;
@@ -145,7 +180,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     statusBox.hidden = !msg;
     if (msg) statusBox.replaceChildren(msg);
     controls.classList.toggle('disabled', !ready);
-    for (const b of [bPrevSec, bBack, bPlay, bFwd, bNextSec, bPrevSent, bNextSent, bChapters, bText]) (b as HTMLButtonElement).disabled = !ready;
+    for (const b of [bPrevSec, bBack, bPlay, bFwd, bNextSec, bPrevSent, bNextSent, bChapters, bText, bmBtn]) (b as HTMLButtonElement).disabled = !ready;
 
     renderCover();
     renderProgress();
@@ -202,11 +237,19 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   }
 
   let readerShownFor = '';
+  let pageShownFor = '';
   function renderText() {
-    if (!textView || !st.content || !st.itemId) return;
-    reader.setContent(st.itemId, st.content);
-    if (readerShownFor !== st.itemId) { readerShownFor = st.itemId; reader.shown(); }
-    reader.setPosition(st.section, st.sentence);
+    if (!st.content || !st.itemId || !st.item) return;
+    const v = effectiveView();
+    if (v === 'text') {
+      reader.setContent(st.itemId, st.content);
+      if (readerShownFor !== st.itemId) { readerShownFor = st.itemId; reader.shown(); }
+      reader.setPosition(st.section, st.sentence);
+    } else if (v === 'page') {
+      pageView.setItem(st.item, st.content);
+      if (pageShownFor !== st.itemId) { pageShownFor = st.itemId; pageView.shown(); }
+      pageView.setPosition(st.section, st.sentence);
+    }
   }
 
   function renderPrep() {
@@ -300,8 +343,11 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     const item = st.item;
     const rows: Node[] = [
       h('button', { class: 'pl-row', onclick: () => { close(); openChapters(); } }, 'Chapters'),
-      h('button', { class: 'pl-row', onclick: () => { close(); toggleText(); } }, textView ? 'Show cover' : 'Show text'),
+      h('button', { class: 'pl-row', onclick: () => { close(); setView(effectiveView() === 'text' ? 'cover' : 'text'); } }, effectiveView() === 'text' ? 'Show cover' : 'Show text'),
     ];
+    if (hasPages()) rows.push(h('button', { class: 'pl-row', onclick: () => { close(); setView('page'); } }, 'Show PDF pages'));
+    if (st.itemId) rows.push(h('button', { class: 'pl-row', onclick: () => { close(); if (st.itemId) openBookmarksSheet(st.itemId, (sec, sen) => startAt(sec, sen)); } }, 'Bookmarks & notes'));
+    if (item?.spokenAudioUrl) rows.push(h('button', { class: 'pl-row', onclick: () => { close(); controller.pause(); openSpokenRecording(item); } }, 'Play human recording (Spoken Wikipedia)'));
     if (settings.mode === 'pocket' && pocket.isSupported()) rows.push(h('button', { class: 'pl-row', onclick: () => { close(); openPrepare(); } }, 'Prepare for offline listening'));
     if (item?.sourceUrl) rows.push(h('a', { class: 'pl-row', href: item.sourceUrl, target: '_blank', rel: 'noopener' }, 'Open on Wikipedia'));
     rows.push(h('button', { class: 'pl-row', onclick: () => { close(); go('#/settings'); } }, 'Settings'));
@@ -330,5 +376,6 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     cover?.revoke();
     closeSheets.slice().forEach((c) => c());
     reader.destroy();
+    pageView.destroy();
   };
 }

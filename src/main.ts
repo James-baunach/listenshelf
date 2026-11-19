@@ -58,6 +58,8 @@ onChange('settings', applyTheme);
 applyTheme();
 mountMiniPlayer(mini);
 route();
+// Files / links shared to the app from Android's share sheet (see src/sw.ts + src/share.ts).
+void import('./share').then((m) => m.handleIncomingShare()).catch((e) => console.error('share', e));
 requestPersistence();
 // Check for app updates on start, hourly, and whenever the app comes back to the foreground
 // (an installed PWA can stay open for days).
