@@ -14,12 +14,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # --ignore-scripts: onnxruntime-node (a Node-only transitive dep of kokoro-js, unused by the
+      # browser build) tries to download CUDA binaries in its install script and fails on CI.
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
