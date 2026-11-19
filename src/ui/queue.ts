@@ -130,7 +130,7 @@ export function mount(root: HTMLElement, _params: Record<string, string>) {
     const box = h('div', { class: 'q-thumb' });
     box.innerHTML = icons.wiki;
     if (url) {
-      const img = h('img', { src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+      const img = h('img', { src: url, alt: '', referrerpolicy: 'no-referrer' });
       img.addEventListener('load', () => box.replaceChildren(img));
     }
     return box;

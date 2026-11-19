@@ -43,7 +43,7 @@ export function mountPocketSettings(root: HTMLElement): () => void {
   const storageBox = h('div');
   const jobsBox = h('div');
   wrap.append(
-    h('div', { class: 'pk-note' }, 'Pocket mode turns text into real audio on your phone with a neural voice, so it keeps playing with the screen locked. Rendering happens while the app is open; keep the screen on. A chapter of ~20 minutes may take several minutes on a phone.'),
+    h('div', { class: 'pk-note' }, 'Pocket mode turns text into real audio on your phone with a neural voice, so it keeps playing with the screen locked. Preparing audio is slower than listening (often 2–4× the chapter length on a phone), so prepare a few chapters ahead — e.g. overnight while charging with the app open and the screen on. Unprepared chapters play with your Live voice.'),
     modelBox, voiceBox, jobsBox, storageBox);
 
   function renderModel() {

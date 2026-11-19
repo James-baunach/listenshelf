@@ -59,4 +59,30 @@ applyTheme();
 mountMiniPlayer(mini);
 route();
 requestPersistence();
-registerSW({ immediate: true });
+// Check for app updates on start, hourly, and whenever the app comes back to the foreground
+// (an installed PWA can stay open for days).
+registerSW({
+  immediate: true,
+  onRegisteredSW(_url, reg) {
+    if (!reg) return;
+    setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {});
+    });
+  },
+});
+
+// The service worker adds the cross-origin-isolation headers, but only pages it
+// controls get them. After the very first install, reload once so Pocket mode
+// can use multi-threaded WASM.
+if ('serviceWorker' in navigator && !self.crossOriginIsolated) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!sessionStorage.getItem('ls-coi-reload')) { sessionStorage.setItem('ls-coi-reload', '1'); location.reload(); }
+  });
+}
+
+// ?debug exposes internals on window.__ls for troubleshooting on a device.
+if (new URLSearchParams(location.search).has('debug')) {
+  Promise.all([import('./player/controller'), import('./pocket/index'), import('./pdf/import'), import('./db')])
+    .then(([c, p, i, d]) => { (window as any).__ls = { controller: c.controller, pocket: p.pocket, importPdfs: i.importPdfs, db: d }; });
+}

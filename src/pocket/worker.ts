@@ -1,6 +1,7 @@
 // Module worker owning the KokoroTTS instance. Keeps heavy model code out of the main bundle.
-import { KokoroTTS } from 'kokoro-js';
-import { env } from '@huggingface/transformers';
+// kokoro-js bundles its own transformers.js + onnxruntime-web; configure THAT copy via its `env` export
+// (importing env from @huggingface/transformers would configure a different, unused instance).
+import { KokoroTTS, env } from 'kokoro-js';
 
 export type WorkerIn =
   | { type: 'load'; device?: 'wasm' | 'webgpu' }
@@ -15,12 +16,14 @@ export type WorkerOut =
   | { type: 'result'; id: number; pcm: Float32Array; sampleRate: number; offsets: number[] }
   | { type: 'synthError'; id: number; message: string };
 
-env.allowLocalModels = false;
-env.useBrowserCache = true; // model files cached in the Cache API -> works offline after first load
-// Self-host the onnxruntime wasm runtime (transformers.js defaults to the jsdelivr CDN, which breaks offline use).
+// Self-host the onnxruntime wasm runtime (the default is the jsdelivr CDN, which breaks offline use).
+// onnxruntime-web in node_modules is the same version kokoro-js bundles (1.22.0-dev.20250409).
+// Model files are cached by transformers.js in the Cache API (its browser default) -> offline after first load.
+// Thread count: onnxruntime picks up to 4 threads automatically when the page is cross-origin isolated
+// (dev/preview server headers; in production the service worker adds COOP/COEP).
 const ortWasm = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm', import.meta.url).href;
 const ortMjs = new URL('../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs', import.meta.url).href;
-if (env.backends.onnx.wasm) env.backends.onnx.wasm.wasmPaths = { wasm: ortWasm, mjs: ortMjs } as any;
+env.wasmPaths = { wasm: ortWasm, mjs: ortMjs } as any;
 
 const MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const LEAD_SILENCE = 0.8;

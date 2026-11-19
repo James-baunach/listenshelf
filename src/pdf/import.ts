@@ -85,7 +85,11 @@ async function processBook(id: string) {
     try {
       const { renderCoverBlob } = await import('./cover');
       const page = await doc.getPage(1);
-      const blob = await renderCoverBlob(page);
+      // Never let the cover block text extraction (rendering can stall, e.g. in a background tab).
+      const blob = await Promise.race([
+        renderCoverBlob(page),
+        new Promise<null>((res) => setTimeout(() => res(null), 15000)),
+      ]);
       page.cleanup();
       if (blob) { await putCover(id, blob); await updateItem(id, { hasCover: true }); }
     } catch (e) { console.warn('cover failed', e); }

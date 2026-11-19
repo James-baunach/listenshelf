@@ -102,15 +102,24 @@ export function htmlToSections(doc: Document, skipTitles: string[]): Section[] {
   const skip = new Set(skipTitles.map((s) => s.trim().toLowerCase()));
   const out: Section[] = [];
 
+  // A heading with no prose of its own (e.g. "Characteristics" followed only by
+  // sub-sections) is carried into its first emitted child as "Parent: Child".
+  let pendingParent: { title: string; level: number } | null = null;
   const walk = (sec: Element, isLead: boolean) => {
     const head = headingOf(sec);
     const title = head?.title || (isLead ? 'Introduction' : '');
     if (head && skip.has(head.title.toLowerCase())) return; // skip incl. subsections
     const paras: string[] = [];
     collect(sec, paras);
-    if (paras.length) {
-      const s = makeSection(title || 'Section', head?.level ?? 1, paras);
-      if (s.sentences.length) out.push(s);
+    let s = paras.length ? makeSection(title || 'Section', head?.level ?? 1, paras) : null;
+    if (s && s.sentences.length) {
+      if (pendingParent && s.level > pendingParent.level) {
+        s = { ...s, title: `${pendingParent.title}: ${s.title}`, level: pendingParent.level };
+      }
+      pendingParent = null;
+      out.push(s);
+    } else if (head) {
+      pendingParent = head;
     }
     for (const child of Array.from(sec.children)) {
       if (child.tagName.toLowerCase() === 'section') walk(child, false);

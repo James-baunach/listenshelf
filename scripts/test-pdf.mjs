@@ -30,7 +30,7 @@ assert.equal(joinLines(['no hyphen', 'here']), 'no hyphen here');
 console.log('joinLines unit checks OK');
 
 const files = process.argv.slice(2).length ? process.argv.slice(2)
-  : [join(root, 'public/sample.pdf'), join(root, 'scripts/fixtures/sample-nooutline.pdf')];
+  : [join(root, 'scripts/fixtures/sample.pdf'), join(root, 'scripts/fixtures/sample-nooutline.pdf')];
 
 let failures = 0;
 for (const file of files) {

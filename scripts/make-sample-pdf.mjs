@@ -1,4 +1,4 @@
-// Generates public/sample.pdf (with outline) and scripts/fixtures/sample-nooutline.pdf (no outline).
+// Generates scripts/fixtures/sample.pdf (with outline) and scripts/fixtures/sample-nooutline.pdf (no outline).
 // Original prose; 3 chapters, running header, page numbers, hyphenated line breaks, one nested outline entry.
 import { PDFDocument, StandardFonts, PDFName, PDFHexString, rgb } from 'pdf-lib';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -193,7 +193,7 @@ async function build(withOutline) {
 mkdirSync(join(root, 'public'), { recursive: true });
 mkdirSync(join(root, 'scripts', 'fixtures'), { recursive: true });
 const a = await build(true);
-writeFileSync(join(root, 'public', 'sample.pdf'), a.bytes);
+writeFileSync(join(root, 'scripts', 'fixtures', 'sample.pdf'), a.bytes);
 const b = await build(false);
 writeFileSync(join(root, 'scripts', 'fixtures', 'sample-nooutline.pdf'), b.bytes);
-console.log(`wrote public/sample.pdf (${a.pages} pages, ${a.bytes.length} bytes) and scripts/fixtures/sample-nooutline.pdf`);
+console.log(`wrote scripts/fixtures/sample.pdf (${a.pages} pages, ${a.bytes.length} bytes) and scripts/fixtures/sample-nooutline.pdf`);
