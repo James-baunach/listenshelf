@@ -47,8 +47,19 @@ export function toast(msg: string, ms = 2600) {
 // self-inflicted popstate is swallowed so it doesn't close the sheet beneath.
 const sheetStack: { dismiss: () => void }[] = [];
 let swallowPops = 0;
+// history.back() is async: a sheet opened right after another closed must wait for that
+// pop to land before pushing its own entry, or the pending back would remove the new entry.
+const deferredPushes: (() => void)[] = [];
+function pushSheetEntry() {
+  if (swallowPops > 0) deferredPushes.push(() => history.pushState({ sheet: true }, ''));
+  else history.pushState({ sheet: true }, '');
+}
 window.addEventListener('popstate', () => {
-  if (swallowPops > 0) { swallowPops--; return; }
+  if (swallowPops > 0) {
+    swallowPops--;
+    if (swallowPops === 0) deferredPushes.splice(0).forEach((f) => f());
+    return;
+  }
   sheetStack[sheetStack.length - 1]?.dismiss();
 });
 
@@ -73,7 +84,7 @@ export function sheet(title: string, body: Node, opts: { onClose?: () => void } 
   }
   const close = () => teardown(true);
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
-  history.pushState({ sheet: true }, '');
+  pushSheetEntry();
   sheetStack.push(entry);
   document.body.appendChild(backdrop);
   requestAnimationFrame(() => backdrop.classList.add('open'));
