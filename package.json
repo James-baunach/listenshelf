@@ -1,0 +1,24 @@
+{
+  "name": "listenshelf",
+  "version": "1.0.0",
+  "description": "Listen to your PDF books and Wikipedia articles with text-to-speech",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vite-plugin-pwa": "^2.0.0"
+  },
+  "dependencies": {
+    "idb": "^8.0.4",
+    "kokoro-js": "^1.2.1",
+    "pdfjs-dist": "^6.5.438"
+  }
+}
