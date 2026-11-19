@@ -91,7 +91,8 @@ export const liveEngine: PlaybackEngine = {
       let failures = 0;
       for (let i = req.startSentence; i < req.sentences.length; i++) {
         if (signal.aborted || myGen !== gen) return 'aborted';
-        const raw = req.sentences[i];
+        let raw = req.sentences[i];
+        if (i === req.startSentence && req.startChar) raw = raw.slice(req.startChar);
         const text = req.settings.skipParentheticals ? stripParentheticals(raw) : raw;
         if (!/[\p{L}\p{N}]/u.test(text)) { req.onSentence(i); continue; }
         const t0 = Date.now();

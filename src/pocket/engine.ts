@@ -69,7 +69,15 @@ export function createEngine(): PlaybackEngine {
 
         const begin = () => {
           if (settled) return;
-          try { a.currentTime = rec.offsets[start] ?? 0; } catch { /* ignore */ }
+          // Starting mid-sentence: estimate the time from the character fraction
+          // (each sentence segment ends with ~0.25 s of inserted silence).
+          let t = rec.offsets[start] ?? 0;
+          const len = req.sentences[start]?.length ?? 0;
+          if (req.startChar && len) {
+            const end = (rec.offsets[start + 1] ?? rec.duration) - 0.25;
+            t += Math.max(0, end - t) * Math.min(1, req.startChar / len);
+          }
+          try { a.currentTime = t; } catch { /* ignore */ }
           a.playbackRate = req.rate;
           last = start; req.onSentence(start);
           a.play().catch((e: Error) => finish(() =>

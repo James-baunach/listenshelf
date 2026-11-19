@@ -8,6 +8,10 @@ import { pocket } from '../pocket';
 import { CHARS_PER_SEC, charsBefore, fmtTime } from '../text';
 import { go, h, sheet, toast } from './dom';
 import { icons } from './icons';
+import { createReader } from './reader';
+
+const TEXT_PREF = 'listenshelf.textView';
+const externalIcon = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>';
 
 const skipIcon = (fwd: boolean, n: number) =>
   `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
@@ -22,14 +26,10 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   let settings: Settings = DEFAULT_SETTINGS;
   let st: PlayerState = controller.getState();
   let pst: PocketStatus = pocket.getStatus();
-  let textView = false;
+  let textView = localStorage.getItem(TEXT_PREF) === '1';
   let dragging = false;
   let cover: CoverSource | null = null;
   let coverKey = '';
-  let textKey = '';
-  let spans: HTMLElement[] = [];
-  let curSpan: HTMLElement | null = null;
-  let lastUserScroll = 0;
   let sleepTick: ReturnType<typeof setInterval> | null = null;
   let closeSheets: (() => void)[] = [];
 
@@ -38,10 +38,15 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   const kind = h('span', { class: 'pl-kind' });
   const badge = h('span', { class: 'pl-badge' });
   const moreBtn = h('button', { class: 'icon-btn', 'aria-label': 'More', html: icons.more, onclick: openMenu });
-  const top = h('div', { class: 'pl-top' }, backBtn, h('div', { class: 'grow pl-topmid' }, kind, badge), moreBtn);
+  const wikiBtn = h('a', { class: 'icon-btn', 'aria-label': 'Open on Wikipedia', title: 'Open on Wikipedia', target: '_blank', rel: 'noopener', html: externalIcon, hidden: true });
+  const top = h('div', { class: 'pl-top' }, backBtn, h('div', { class: 'grow pl-topmid' }, kind, badge), wikiBtn, moreBtn);
 
   const coverBox = h('div', { class: 'pl-cover' });
-  const textPane = h('div', { class: 'pl-text', hidden: true });
+  const reader = createReader((section, sentence, char) => {
+    controller.goTo(section, sentence, char);
+    if (!controller.getState().playing) controller.play();
+  });
+  const textPane = h('div', { class: 'pl-text', hidden: true }, reader.el);
   const titleEl = h('h1', { class: 'pl-title' });
   const secBtn = h('button', { class: 'pl-section', onclick: openChapters });
   const statusBox = h('div', { class: 'pl-status card', hidden: true });
@@ -67,7 +72,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
   const sleepLabel = h('span');
   const bSleep = h('button', { class: 'pl-pill', 'aria-label': 'Sleep timer', onclick: openSleep }, h('span', { html: icons.moon }), sleepLabel);
   const bChapters = h('button', { class: 'icon-btn', 'aria-label': 'Chapters', html: icons.list, onclick: openChapters });
-  const bText = h('button', { class: 'icon-btn', 'aria-label': 'Text view', html: icons.text, onclick: () => { textView = !textView; renderAll(); } });
+  const bText = h('button', { class: 'icon-btn', 'aria-label': 'Text view', html: icons.text, onclick: toggleText });
   const tools = h('div', { class: 'pl-tools' }, bPrevSent, bNextSent, bSpeed, bSleep, bChapters, bText);
 
   const bPrepare = h('button', { class: 'btn pl-prepare', onclick: openPrepare, hidden: true }, h('span', { html: icons.download }), 'Prepare for offline / locked-screen listening');
@@ -85,7 +90,13 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     const t = e.changedTouches[0];
     if (t.clientY - sy > 90 && Math.abs(t.clientX - sx) < 60) goBack();
   }, { passive: true });
-  for (const ev of ['wheel', 'touchmove', 'pointerdown'] as const) textPane.addEventListener(ev, () => { lastUserScroll = Date.now(); }, { passive: true });
+
+  function toggleText() {
+    textView = !textView;
+    localStorage.setItem(TEXT_PREF, textView ? '1' : '0');
+    renderAll();
+    if (textView) reader.shown();
+  }
 
   function goBack() {
     if (history.length > 1) history.back();
@@ -102,6 +113,8 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     badge.hidden = !st.engine;
     badge.className = 'pl-badge ' + (st.engine ?? '');
     titleEl.textContent = item?.title ?? (st.loading ? 'Loading…' : '');
+    wikiBtn.hidden = !item?.sourceUrl;
+    if (item?.sourceUrl && wikiBtn.getAttribute('href') !== item.sourceUrl) wikiBtn.setAttribute('href', item.sourceUrl);
     const s = sec();
     secBtn.replaceChildren(h('span', { class: 'ellipsis' }, s?.title || ''));
     if (s) secBtn.append(h('span', { html: icons.list, class: 'pl-section-ic' }));
@@ -188,33 +201,13 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     if (typeof sl === 'number') sleepTick = setInterval(upd, 1000);
   }
 
+  let readerShownFor = '';
   function renderText() {
-    if (!textView || !st.content) { return; }
-    const s = sec();
-    if (!s) return;
-    const key = `${st.itemId}:${st.section}`;
-    if (key !== textKey) {
-      textKey = key;
-      spans = s.sentences.map((t, i) => h('span', { class: 'sent', 'data-i': i }, t, ' '));
-      curSpan = null;
-      textPane.replaceChildren(h('h2', { class: 'pl-text-title' }, s.title), h('p', null, spans));
-      textPane.scrollTop = 0;
-      lastUserScroll = 0;
-    }
-    const el = spans[st.sentence];
-    if (el && el !== curSpan) {
-      curSpan?.classList.remove('cur');
-      el.classList.add('cur');
-      curSpan = el;
-      if (Date.now() - lastUserScroll > 4000) {
-        textPane.scrollTo({ top: Math.max(0, el.offsetTop - textPane.clientHeight / 3), behavior: 'smooth' });
-      }
-    }
+    if (!textView || !st.content || !st.itemId) return;
+    reader.setContent(st.itemId, st.content);
+    if (readerShownFor !== st.itemId) { readerShownFor = st.itemId; reader.shown(); }
+    reader.setPosition(st.section, st.sentence);
   }
-  textPane.addEventListener('click', (e) => {
-    const t = (e.target as HTMLElement).closest('.sent') as HTMLElement | null;
-    if (t) controller.goTo(st.section, Number(t.dataset.i));
-  });
 
   function renderPrep() {
     const jobs = pst.jobs.filter((j) => j.itemId === id && j.voice === settings.pocketVoice);
@@ -307,7 +300,7 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     const item = st.item;
     const rows: Node[] = [
       h('button', { class: 'pl-row', onclick: () => { close(); openChapters(); } }, 'Chapters'),
-      h('button', { class: 'pl-row', onclick: () => { close(); textView = !textView; renderAll(); } }, textView ? 'Show cover' : 'Show text'),
+      h('button', { class: 'pl-row', onclick: () => { close(); toggleText(); } }, textView ? 'Show cover' : 'Show text'),
     ];
     if (settings.mode === 'pocket' && pocket.isSupported()) rows.push(h('button', { class: 'pl-row', onclick: () => { close(); openPrepare(); } }, 'Prepare for offline listening'));
     if (item?.sourceUrl) rows.push(h('a', { class: 'pl-row', href: item.sourceUrl, target: '_blank', rel: 'noopener' }, 'Open on Wikipedia'));
@@ -336,5 +329,6 @@ export function mount(root: HTMLElement, params: Record<string, string>) {
     if (sleepTick) clearInterval(sleepTick);
     cover?.revoke();
     closeSheets.slice().forEach((c) => c());
+    reader.destroy();
   };
 }

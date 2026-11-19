@@ -29,12 +29,29 @@
 .pl-prepare { width: 100%; font-size: 14px; }
 .pl-prepare svg { width: 18px; height: 18px; }
 
-.pl-text { flex: 1; min-height: 0; max-height: 46dvh; overflow-y: auto; position: relative; font-family: var(--serif); font-size: 19px; line-height: 1.6; padding: 8px 4px; background: var(--bg-2); border-radius: var(--radius); border: 1px solid var(--line); padding: 12px 14px; }
+.pl-text { flex: 1; min-height: 0; max-height: 46dvh; position: relative; background: var(--bg-2); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; display: flex; }
 .pl-text[hidden], .pl-cover[hidden] { display: none; }
-.pl-text-title { font-family: var(--font); font-size: 15px; color: var(--fg-3); margin: 0 0 8px; }
-.pl-text p { margin: 0; }
-.pl-text .sent { cursor: pointer; border-radius: 4px; transition: background .2s; }
-.pl-text .sent.cur { background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* Text mode: the reader fills the screen between the title and the controls. */
+.pl.textmode { height: calc(100dvh - 40px - var(--safe-b)); min-height: 0; }
+.pl.textmode .pl-text { max-height: none; }
+.pl.textmode .pl-title { font-size: 17px; margin: 0; }
+.pl.textmode .pl-section { min-height: 32px; }
+
+/* Reader (ui/reader.ts) */
+.rd { position: relative; flex: 1; min-width: 0; display: flex; }
+.rd-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: auto; padding: 12px 16px 40vh;
+  font-family: var(--serif); font-size: 19px; line-height: 1.7; color: var(--fg-2); }
+.rd-sec + .rd-sec { margin-top: 20px; }
+.rd-h { font-family: var(--font); color: var(--fg); margin: 0 0 8px; letter-spacing: -.01em; }
+.rd-h.lv1 { font-size: 19px; }
+.rd-h.lv2 { font-size: 16px; color: var(--fg-2); }
+.rd-body p { margin: 0; }
+.rd .sent { cursor: pointer; text-decoration: underline transparent; text-decoration-thickness: 2px; text-underline-offset: 5px; transition: color .2s, text-decoration-color .2s; }
+.rd .sent.cur { color: var(--fg); text-decoration-color: var(--accent); }
+.rd-jump { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; border: 0; border-radius: 999px;
+  padding: 10px 16px; min-height: 40px; background: var(--accent); color: var(--accent-fg); font-weight: 700; font-size: 14px; box-shadow: var(--shadow); cursor: pointer; white-space: nowrap; }
+.rd-flash { position: absolute; pointer-events: none; border-radius: 4px; background: var(--accent); opacity: .45; animation: rdflash .7s ease-out forwards; }
+@keyframes rdflash { to { opacity: 0; } }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips .chip { min-height: 44px; padding: 0 16px; font-size: 16px; font-weight: 600; }

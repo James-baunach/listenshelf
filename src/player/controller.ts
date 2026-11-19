@@ -123,13 +123,15 @@ async function loop(my: number, a: AbortController) {
         }
 
         const start = Math.min(Math.max(state.sentence, 0), sec.sentences.length - 1);
+        const sc = start === state.sentence ? startChar : 0;
+        startChar = 0; // consumed: resuming after a pause restarts the sentence from its beginning
         // Live mode: announce the section title as a prefix utterance when starting a section.
-        const announce = !usePocket && start === 0 && !!sec.title && (count > 1 || sec.title !== state.item?.title);
+        const announce = !usePocket && start === 0 && sc === 0 && !!sec.title && (count > 1 || sec.title !== state.item?.title);
         const offset = announce ? 1 : 0;
         const sentences = announce ? [sec.title, ...sec.sentences] : sec.sentences;
         emit();
         const res = await engine.play({
-          itemId, sectionIndex: secIdx, sentences, startSentence: announce ? 0 : start,
+          itemId, sectionIndex: secIdx, sentences, startSentence: announce ? 0 : start, startChar: sc,
           rate: settings.rate, pitch: settings.pitch, settings,
           signal: a.signal,
           onSentence: (i) => {
@@ -205,9 +207,12 @@ function clampPos(section: number, sentence: number): [number, number] {
   const n = secs[s].sentences.length;
   return [s, Math.min(Math.max(sentence, 0), Math.max(0, n - 1))];
 }
-function setPos(section: number, sentence: number) {
+/** Character offset into the current sentence for the next engine start (tap-a-word). */
+let startChar = 0;
+function setPos(section: number, sentence: number, char = 0) {
   const [s, i] = clampPos(section, sentence);
   state.section = s; state.sentence = i;
+  startChar = s === section && i === sentence ? Math.max(0, char) : 0;
   if (state.itemId) void savePosition(state.itemId, { section: s, sentence: i });
   if (state.playing) startPlayback(); else emit();
 }
@@ -341,7 +346,7 @@ export const controller: PlayerController = {
     if (secsIn > 3 || state.section === 0) setPos(state.section, 0);
     else setPos(state.section - 1, 0);
   },
-  goTo(section, sentence = 0) { if (state.content) setPos(section, sentence); },
+  goTo(section, sentence = 0, char = 0) { if (state.content) setPos(section, sentence, char); },
   setRate(rate) {
     const r = Math.round(Math.min(Math.max(rate, 0.5), 3) * 100) / 100;
     settings = { ...settings, rate: r };

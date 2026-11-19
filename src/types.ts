@@ -113,6 +113,8 @@ export interface EnginePlayRequest {
   sectionIndex: number;
   sentences: string[];
   startSentence: number;
+  /** Optional: start this many characters into sentences[startSentence] (tap-a-word to start). */
+  startChar?: number;
   rate: number;
   pitch: number;
   settings: Settings;
@@ -164,7 +166,8 @@ export interface PlayerController {
   nextSection(): void;
   /** Goes to start of current section if > 3 s in, else previous section. */
   prevSection(): void;
-  goTo(section: number, sentence?: number): void;
+  /** Jump to a position. `char` starts partway into the sentence (e.g. at a tapped word). */
+  goTo(section: number, sentence?: number, char?: number): void;
   setRate(rate: number): void;
   setSleepTimer(minutes: number | 'section' | null): void;
   /** Re-read settings (voice/mode changed) and restart current sentence if playing. */
